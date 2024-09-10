@@ -1,3 +1,6 @@
 [submodule "DiffSep"]
 	path = DiffSep
 	url = https://github.com/fakufaku/diffusion-separation.git
+[submodule "ncsn"]
+	path = ncsn
+	url = https://github.com/ermongroup/ncsn
