@@ -1,0 +1,3 @@
+[submodule "DiffSep"]
+	path = DiffSep
+	url = https://github.com/fakufaku/diffusion-separation.git
