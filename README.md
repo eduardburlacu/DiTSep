@@ -1,8 +1,8 @@
 ---
-title: 
+title: TSE
 url: TBC
-labels: [Target Speaker Extraction, Diffusion Models, , ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
-dataset: [MNIST, CIFAR10, Sent140, Shakespeare] # list of datasets you include in your baseline
+labels: [Target Speaker Extraction, Diffusion Models ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
+dataset: [ Sent140, Shakespeare] # list of datasets you include in your baseline
 ---
 
 # Diffusion Models for Source Separation and Extraction
