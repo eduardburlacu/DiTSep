@@ -6,10 +6,11 @@ dataset: [ Sent140, Shakespeare] # list of datasets you include in your baseline
 ---
 
 # Diffusion Models for Source Separation and Extraction
-Master Thesis Project at University of Cambridge.
-**Paper link:** 
+Master Thesis Project at University of Cambridge. 
 
-**Authors:** Eduard Burlacu, Stylianos Venieris, Aaron Zhao, Robert Mullins
+**Paper link:** \
+**Author:** Eduard Burlacu \
+**Supervisors:** Brian Sun, Phil Woodland
 
 **Abstract:** 
 
