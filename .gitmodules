@@ -4,3 +4,6 @@
 [submodule "ncsn"]
 	path = ncsn
 	url = https://github.com/ermongroup/ncsn
+[submodule "Sepformer"]
+	path = Sepformer
+	url = https://github.com/Zhongyang-debug/Attention-Is-All-You-Need-In-Speech-Separation.git
