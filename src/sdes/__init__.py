@@ -14,6 +14,8 @@ __all__ = [
     "CorrectorRegistry",
     "Predictor",
     "Corrector",
+    "get_pc_sampler",
+    "get_ode_sampler",
 ]
 
 
