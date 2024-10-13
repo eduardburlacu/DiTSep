@@ -19,7 +19,7 @@
 import torch
 
 import numpy as np
-from ...sdes import OUVESDE, OUVPSDE
+from src.sdes.sdes import OUVESDE, OUVPSDE
 
 
 _MODELS = {}
@@ -50,8 +50,6 @@ def get_model(name):
 
 def get_sigmas(sigma_min, sigma_max, num_scales):
     """Get sigmas --- the set of noise levels for SMLD from config files.
-    Args:
-      config: A ConfigDict object parsed from the config file
     Returns:
       sigmas: a jax numpy arrary of noise levels
     """
