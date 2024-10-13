@@ -16,6 +16,7 @@ __all__ = [
     "Corrector",
     "get_pc_sampler",
     "get_ode_sampler",
+    "get_pc_scheduled_sampler",
 ]
 
 

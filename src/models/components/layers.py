@@ -23,7 +23,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
-from src.models.ncsnpp_utils.normalization import ConditionalInstanceNorm2dPlus
+from src.models.components.normalization import ConditionalInstanceNorm2dPlus
 
 
 def get_act(config):

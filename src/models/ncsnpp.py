@@ -16,13 +16,12 @@
 # pylint: skip-file
 
 import functools
-import importlib.abc
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from .ncsnpp_utils import layers, layerspp, normalization
+from src.models.components import layers, layerspp, normalization
 
 ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
 ResnetBlockBigGAN = layerspp.ResnetBlockBigGANpp

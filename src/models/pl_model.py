@@ -11,7 +11,7 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf.omegaconf import open_dict
 from torch_ema import ExponentialMovingAverage
 
-from src.sdes import sdes
+from src import sdes
 from src.models import utils
 
 log = logging.getLogger(__name__)
