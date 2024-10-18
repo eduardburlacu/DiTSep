@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.models.components import layers, layerspp, normalization
+from src.models.diffsep.components import layers, layerspp, normalization
 
 ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
 ResnetBlockBigGAN = layerspp.ResnetBlockBigGANpp
