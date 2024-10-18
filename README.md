@@ -1,23 +1,20 @@
 ---
-title: TSE
-url: TBC
-labels: [Target Speaker Extraction, Diffusion Models ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
-dataset: [ Sent140, Shakespeare] # list of datasets you include in your baseline
+title: DiTSep
+labels: [Source Separation, Diffusion Models ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
+dataset: [WSJ0-2mix, WSJ0-3mix, Libri2mix, WHARM!, WHAM!] # list of datasets you include in your baseline
 ---
 
 # Diffusion Models for Source Separation and Extraction
 Master Thesis Project at University of Cambridge. 
 
+**Site link:** \
 **Paper link:** \
 **Author:** Eduard Burlacu \
 **Supervisors:** Brian Sun, Phil Woodland
 
 **Abstract:** 
 
-
-> Note: If you use this baseline in your work, please remember to cite the original authors of the paper.
-
-## About this baseline
+## About this project
 **What's implemented:** Source code used for producing the results in _____ paper.
 
 **Datasets:**
