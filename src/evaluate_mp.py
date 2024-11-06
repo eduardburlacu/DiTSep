@@ -15,22 +15,24 @@ import numpy as np
 import torch
 import torchaudio
 import yaml
+import logging
 from omegaconf import OmegaConf
 from pesq import pesq
 from pystoi import stoi
 
-# from sdes.sdes import MixSDE
-from src import utils
-from src.data import WSJ0_mix
-from src.models.pl_model import DiffSepModel
+import utils
+from datasets import WSJ0_mix
+from pl_model import DiffSepModel
 
 
-def get_default_datasets(n_spkr=2, fs=8000):
+def get_default_datasets(n_spkr=2, fs=8000, USE_WSJ0 = False, USE_LIBRIMIX=True):
     ds = OmegaConf.load("config/datamodule/default.yaml")
-    for split in ["val", "test", "train"]:
-        ds[split].dataset.path = "data/wsj0_mix"
-    for split in ["libri-clean", "libri-noisy"]:
-        ds[split].dataset.path = "data/LibriMix"
+    if USE_WSJ0:
+        for split in ["val", "test", "train"]:
+            ds[split].dataset.path = "/data/milsrg1/corpora/wsj0_mix"
+    if USE_LIBRIMIX:
+        for split in ["libri-clean", "libri-noisy"]:
+            ds[split].dataset.path = "/data/milsrg1/corpora/LibriMix"
     for split in ds:
         if "_target_" in ds[split].dataset:
             ds[split].dataset.pop("_target_")
@@ -172,7 +174,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
 
     else:
         # load the config file
-        with open(args.ckpt.parents[1] / "hparams.yaml", "r") as f:
+        with open(args.ckpt.parent / "hparams.yaml", "r") as f:
             hparams = yaml.safe_load(f)
         config = hparams["config"]
 
@@ -195,7 +197,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
         dataset = WSJ0_mix(**ds_args)
 
         # load model
-        model = DiffSepModel.load_from_checkpoint(str(args.ckpt))
+        model = DiffSepModel.load_from_checkpoint(str(args.ckpt), config = config)
 
         # transfer to GPU
         model = model.to(device)
@@ -246,7 +248,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
             save_samples_fig = False
 
         else:
-            (mix, target), *__ = model.normalize_batch((mix, target))
+            (mix, target), _, _ = model.normalize_batch((mix, target))
 
             sampler = model.get_pc_sampler(
                 "reverse_diffusion",
@@ -431,7 +433,7 @@ if __name__ == "__main__":
 
     else:
         # load the config file
-        hparams = OmegaConf.load(args.ckpt.parents[1] / "hparams.yaml")
+        hparams = OmegaConf.load(args.ckpt.parent / "hparams.yaml")
         config = hparams.config
 
         # prepare inference parameters
@@ -447,7 +449,7 @@ if __name__ == "__main__":
         tag_inf = f"N-{N}_snr-{snr}_corrstep-{corrector_steps}_denoise-{denoise}_schedule-{args.schedule}"
 
         # create folder name based on experiment and checkpoint
-        exp_name = args.ckpt.parents[1].name
+        exp_name = args.ckpt.parent.name
         ckpt_name = args.ckpt.stem
         if args.tag is None:
             output_dir = output_dir_base / f"{exp_name}_{ckpt_name}_{tag_inf}"
@@ -470,7 +472,7 @@ if __name__ == "__main__":
         # load dataset to get the length
         if no_proc_flag:
             # load validation dataset
-            dataset = WSJ0_mix(path="data/wsj0_mix", n_spkr=2, cut="max", split=split)
+            dataset = WSJ0_mix(path="/data/milsrg1/corpora/wsj0_mix", n_spkr=2, cut="max", split=split)
         else:
             if split in config.datamodule:
                 ds_args = config.datamodule[split].dataset
@@ -482,7 +484,7 @@ if __name__ == "__main__":
             # check the location of the data
             data_path = Path(ds_args.path)
             if not data_path.exists():
-                ds_args.path = "./data/wsj0_mix"
+                ds_args.path = "/data/milsrg1/corpora/wsj0_mix"
 
             # load validation dataset
             dataset = WSJ0_mix(**ds_args)

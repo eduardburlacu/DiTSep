@@ -11,6 +11,8 @@ import torchaudio
 from tqdm import tqdm
 
 # from sdes.sdes import MixSDE
+import rootutils
+rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 from src.models.pl_model import DiffSepModel
 
 DEFAULT_MODEL = "fakufaku/diffsep"

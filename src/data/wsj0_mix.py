@@ -60,11 +60,16 @@ class WSJ0_mix(torch.utils.data.Dataset):
             raise ValueError(
                 f"The split parameter must be 'train', 'val', or 'test' (passed {split})"
             )
-
-        self.path = (
-            self.base_folder
-            / f"{self.n_spkr}speakers/wav{self.fs // 1000}k/{cut}/{split_map[split]}"
-        )
+        if "libri" in self.base_folder.name.lower():
+            self.path = (
+                self.base_folder
+                / f"Libri{self.n_spkr}Mix/wav{self.fs // 1000}k/{cut}/{split_map[split]}"
+            )                 
+        else:
+            self.path = (
+                self.base_folder
+                / f"{self.n_spkr}speakers/wav{self.fs // 1000}k/{cut}/{split_map[split]}"
+            )
 
         self.path_mix = self.path / mix_dir
         self.path_src = [self.path / f"s{idx + 1}" for idx in range(self.n_spkr)]

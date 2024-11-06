@@ -4,17 +4,31 @@ torch_ema
 einops
 librosa
 onnxruntime
+scikit-learn
+tensorboard
+joblib
+ninja
+seaborn
+matplotlib
+scipy>=1.5.0
+ipython
+ffmpeg
+sox
+lightning==2.*
 matplotlib
 asteroid
 asteroid-filterbanks
 fast-bss-eval
-rich
 huggingface_hub
+pyroomacoustics
+PyYAML
+tabulate
+fast-bss-eval
 # --------- hydra --------- #
 hydra-core==1.3.2
 hydra-colorlog==1.2.0
 hydra-optuna-sweeper==1.2.0
-
+hydra-joblib-launcher
 # --------- loggers --------- #
 # wandb
 # neptune-client

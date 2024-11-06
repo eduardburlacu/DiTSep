@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 
-from src.data.wsj0_mix import max_collator
+from .wsj0_mix import max_collator
 
 split_map = {
     "test",
@@ -28,7 +28,7 @@ class NoisyDataset(Dataset):
         split="train",
     ):
 
-        ## In case of Valentini dataset
+        ## In case of Valentini dataseti
         audio_path = Path(to_absolute_path(str(audio_path)))
         audio_path = os.path.join(audio_path, split)
         self.noisy_path = os.path.join(audio_path, "noisy")
