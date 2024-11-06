@@ -12,6 +12,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+notebooks/
 eggs/
 .eggs/
 lib/
@@ -148,6 +149,7 @@ dmypy.json
 ../configs/local/default.yaml
 /data/
 /logs/
+/LOGS/
 .env
 
 # Aim logging
