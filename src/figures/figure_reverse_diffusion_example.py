@@ -12,9 +12,9 @@ import numpy as np
 import seaborn as sns
 
 # from sdes.sdes import MixSDE
-from src.data import WSJ0_mix
-from src.models.pl_model import DiffSepModel
-from src.sdes import get_pc_sampler
+from datasets import WSJ0_mix
+from models.diffsep.pl_model import DiffSepModel
+from sdes import get_pc_sampler
 
 if __name__ == "__main__":
 

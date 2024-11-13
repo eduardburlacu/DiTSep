@@ -3,16 +3,18 @@
 # MIT License
 #
 # Create a figure showing the evolution of the parameters of the SDE
+import math
 
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from src.data import WSJ0_mix
-from src.models.pl_model import DiffSepModel
-from sdes.sdes import MixSDE
+from datasets import WSJ0_mix
+from models.diffsep.pl_model import DiffSepModel
+from sdes.sdes import MixSDE, PriorMixSDE
 
 matplotlib.rc("text", usetex=True)
 matplotlib.rcParams[

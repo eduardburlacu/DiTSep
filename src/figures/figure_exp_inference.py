@@ -7,6 +7,8 @@ from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
+import pandas
+import seaborn as sns
 
 matplotlib.rc("text", usetex=True)
 matplotlib.rcParams[

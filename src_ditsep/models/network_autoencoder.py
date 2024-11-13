@@ -127,7 +127,7 @@ class OobleckDiagonalGaussianDistribution(object):
         self.mean, self.scale = parameters.chunk(2, dim=1)
         self.std = nn.functional.softplus(self.scale) + 1e-4
         self.var = self.std * self.std
-        self.logvar = torch.log(self.var)
+        selfblogvar = torch.log(self.var)
         self.deterministic = deterministic
 
     def sample(self, generator: Optional[torch.Generator] = None) -> torch.Tensor:
@@ -255,7 +255,9 @@ if __name__ == "__main__":
         downsampling_ratios=downsampling_ratios,
         channel_multiples=channel_multiples,
     )
-
+    print("____Encoder____\n")
+    print(f"Encoder number of parameters: {sum(p.numel() for p in encoder.parameters())}\n")
+    print(encoder)
     decoder = OobleckDecoder(
         channels=decoder_channels,
         input_channels=decoder_input_channels,
@@ -263,10 +265,13 @@ if __name__ == "__main__":
         upsampling_ratios=downsampling_ratios[::-1],
         channel_multiples=channel_multiples,
     )
-
+    print("____Decoder____\n")
+    print(f"Decoder number of parameters: {sum(p.numel() for p in decoder.parameters())}\n")
+    print(decoder)
     x = torch.randn(1, audio_channels, 8_000)
-    z = encoder(x)
-    x_hat = decoder(z)
-
+    
     print(f"Input shape: {x.shape}")
+    z = encoder(x)
+    print(f"Latent shape: {z.shape}")
+    x_hat = decoder(z)
     print(f"Output shape: {x_hat.shape}")

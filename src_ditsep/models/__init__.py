@@ -6,3 +6,11 @@ __all__ = [
     "FACodecEncoder",
     "FACodecDecoder"
 ]
+
+BACKENDS = {
+    "torch",
+    "pytorch_lightning",
+    "lightning", 
+    "accelerator"
+    }
+

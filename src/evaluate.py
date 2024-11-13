@@ -17,7 +17,7 @@ import yaml
 from pesq import pesq
 from pystoi import stoi
 
-from src.data import NoisyDataset, WSJ0_mix
+from src.datasets import NoisyDataset, WSJ0_mix
 from src.models.pl_model import DiffSepModel
 
 output_dir_base = Path("results")

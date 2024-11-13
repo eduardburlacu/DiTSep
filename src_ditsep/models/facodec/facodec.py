@@ -1,19 +1,23 @@
-# Copyright (c) 2023 Amphion.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
+"""
+Based on Amphion implementation. Link: 
+"""
+from dataclasses import dataclass
 import numpy as np
 import torch
 from torch import nn, sin, pow
 from torch.nn import Parameter
+
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.utils import BaseOutput
+
 from .alias_free_torch import *
 from .quantize import *
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from .transformer import TransformerEncoder
 from .gradient_reversal import GradientReversal
-from .melspec import MelSpectrogram
+from omegaconf import OmegaConf
 
 
 def init_weights(m):
@@ -595,3 +599,82 @@ class FACodecDecoder(nn.Module):
 
     def reset_parameters(self):
         self.apply(init_weights)
+
+
+@dataclass
+class FACodecOutput(BaseOutput):
+    pass
+
+
+class FACodec(ModelMixin, ConfigMixin):
+    def __init__(
+            self, 
+            ngf: int = 32, 
+            in_channels: int = 256, 
+            out_channels: int = 256, 
+            up_ratios: list = [2, 4, 5, 5],
+            codebook: OmegaConf|None = None,
+            gr: OmegaConf|None = None,
+            ):
+        
+        super(FACodec, self).__init__()
+        self.codebook, self.gr = self.verify_inputs(codebook, gr)
+
+        self.encoder = FACodecEncoder(
+            ngf=ngf,
+            up_ratios=up_ratios,
+            out_channels=out_channels,
+        )
+
+        self.decoder = FACodecDecoder(
+            in_channels=in_channels,
+            upsample_initial_channel=1024,
+            ngf=ngf,
+            up_ratios=up_ratios[::-1],
+            vq_num_q_c=codebook.num_q_c,
+            vq_num_q_p=codebook.num_q_p,
+            vq_num_q_r=codebook.num_q_r,
+            vq_dim=codebook.dimension,
+            codebook_dim=codebook.codebook_dim,
+            codebook_size_prosody=codebook.size_prosody,
+            codebook_size_content=codebook.size_content,
+            codebook_size_residual=codebook.size_residual,
+            use_gr_x_timbre=gr.use_gr_x_timbre,
+            use_gr_residual_f0=gr.use_gr_residual_f0,
+            use_gr_residual_phone=gr.use_gr_residual_phone,
+        )
+
+    def verify_inputs(self, codebook, gr):
+        if codebook:
+            assert isinstance(codebook, OmegaConf), "Codebook configuration must be provided"
+            assert codebook.dimension > 0, "Codebook dimension must be greater than 0"
+            assert codebook.num_q_c > 0, "Number of content quantizers must be greater than 0"
+            assert codebook.num_q_p > 0, "Number of prosody quantizers must be greater than 0"
+            assert codebook.num_q_r >= 0, "Number of residual quantizers must be greater than or equal to 0"
+            self.codebook = codebook
+        else:
+            default = OmegaConf.create({
+                "dimension": 256,
+                "num_q_c": 2,
+                "num_q_p": 1,
+                "num_q_r": 3,
+                "codebook_dim": 8,
+                "size_prosody": 10,
+                "size_content": 10,
+                "size_residual": 10
+            })
+        assert gr is not None, "Gradient Reversal configuration must be provided"
+    
+    def forward(self, x:torch.Tensor):
+        assert x.shape[1] == 1, "Input tensor must have 1 channel"
+        # encode
+        enc_out = self.encoder(x)
+        # quantize
+        vq_post_emb, _, _, _, spk_embs = self.decoder(enc_out, eval_vq=False, vq=True)
+        # decode
+        x_hat = self.decoder.inference(vq_post_emb, spk_embs)
+        
+        if not return_dict:
+            return (x_hat,)
+        
+        return 

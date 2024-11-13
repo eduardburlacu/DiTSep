@@ -4,5 +4,5 @@ conda activate dit
 echo Python version used:
 python -V
 echo Starting evaluation...
-python ./evaluate_mp.py /data/milsrg1/huggingface/cache/efb48/diffsep/checkpoint.pt --split libri-clean
+python ./train.py
 echo ...evaluation finished

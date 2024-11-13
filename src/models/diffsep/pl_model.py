@@ -1,18 +1,27 @@
 # 2023 (c) LINE Corporation
 # Authors: Robin Scheibler
 # MIT License
+import datetime
 import itertools
 import json
 import logging
 import math
+import os
+from collections import defaultdict
+from pathlib import Path
+
+import fast_bss_eval
+import numpy as np
 import pytorch_lightning as pl
 import torch
-from hydra.utils import instantiate, to_absolute_path
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
 from omegaconf.omegaconf import open_dict
+from scipy.optimize import linear_sum_assignment
 from torch_ema import ExponentialMovingAverage
 
-from src import sdes
-from src import utils
+import sdes
+import utils
 
 log = logging.getLogger(__name__)
 
@@ -92,8 +101,7 @@ class DiffSepModel(pl.LightningModule):
         self.save_hyperparameters()
 
         # the config and all hyperparameters are saved by hydra to the experiment dir
-        self.config = config
-
+        self.config = OmegaConf.create(config)
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
 
         self.valid_max_sep_batches = getattr(
@@ -110,7 +118,7 @@ class DiffSepModel(pl.LightningModule):
         self.t_rev_init = getattr(self.config.model, "t_rev_init", 0.03)
         log.info(f"Sampling time in [{self.t_eps, self.t_max}]")
 
-        self.lr_warmup = getattr(config.model, "lr_warmup", None)
+        self.lr_warmup = getattr(self.config.model, "lr_warmup", None)
         self.lr_original = self.config.model.optimizer.lr
 
         self.train_source_order = getattr(

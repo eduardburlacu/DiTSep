@@ -2,7 +2,7 @@ import errno
 import os
 from pathlib import Path
 
-import lightning as pl
+import pytorch_lightning as pl
 
 
 def symlink_force(target, link_name):
