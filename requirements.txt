@@ -1,15 +1,15 @@
 # --------- pytorch --------- #
 torchmetrics>=0.11.4
 torch_ema
-einops
-librosa
+einops~=0.8.0
+librosa~=0.10.2.post1
 onnxruntime
 scikit-learn
 tensorboard
 joblib
 ninja
-seaborn
-matplotlib
+seaborn~=0.13.2
+matplotlib~=3.7.1
 scipy>=1.5.0
 ipython
 ffmpeg
@@ -21,7 +21,7 @@ asteroid-filterbanks
 fast-bss-eval
 huggingface_hub
 pyroomacoustics
-PyYAML
+PyYAML~=6.0.1
 tabulate
 fast-bss-eval
 # --------- hydra --------- #
@@ -39,6 +39,24 @@ hydra-joblib-launcher
 # --------- others --------- #
 rootutils       # standardizing the project root setup
 pre-commit      # hooks for applying linters on commit
-rich            # beautiful text formatting in terminal
-pytest          # tests
+rich~=13.7.1
+pytest~=6.2.4
 # sh            # for running bash commands in some tests (linux/macos only)
+
+pytorch-lightning~=2.4.0
+torch~=2.3.0.post101
+torchaudio~=2.5.0
+omegaconf~=2.3.0
+torchvision~=0.14.1+cu116
+numpy~=1.23.5
+lightning-utilities~=0.11.8
+tqdm~=4.66.1
+pesq~=0.0.4
+torch-ema~=0.3
+soundfile~=0.12.1
+huggingface-hub~=0.20.3
+pystoi~=0.4.1
+datasets~=2.19.1
+packaging~=23.1
+setuptools~=68.0.0
+diffusers~=0.18.2

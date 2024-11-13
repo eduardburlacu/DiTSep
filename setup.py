@@ -3,12 +3,12 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="src",
+    name="DiTSep",
     version="0.0.1",
     description="Transformer-based diffusion for Source Separation and Target Speech Extraction",
     author="Eduard Burlacu",
     author_email="efb48@cam.ac.uk",
-    url="https://github.com/user/project",
+    url="https://github.com/eduardburlacu/DiTSep",
     install_requires=["lightning", "hydra-core"],
     packages=find_packages(),
     # use this to customize global commands available in the terminal after installing the package
