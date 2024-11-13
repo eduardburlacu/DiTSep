@@ -54,9 +54,6 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
     An autoencoder for encoding waveforms into latents and decoding latent representations into waveforms. First
     introduced in Stable Audio.
 
-    This model inherits from [`ModelMixin`]. Check the superclass documentation for it's generic methods implemented
-    for all models (such as downloading or saving).
-
     Parameters:
         encoder_hidden_size (`int`, *optional*, defaults to 128):
             Intermediate representation dimension for the encoder.
@@ -79,13 +76,13 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
     @register_to_config
     def __init__(
         self,
-        encoder_hidden_size=128,
+        encoder_hidden_size = 256, #default was 128
         downsampling_ratios=[2, 4, 4, 8, 8],
         channel_multiples=[1, 2, 4, 8, 16],
-        decoder_channels=128,
-        decoder_input_channels=64,
-        audio_channels=2,
-        sampling_rate=44100,
+        decoder_channels=256,
+        decoder_input_channels = 64,
+        audio_channels=1,
+        sampling_rate=8_000, #from the Libri2Mix dataset
     ):
         super().__init__()
 
@@ -220,3 +217,7 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
             return (dec,)
 
         return OobleckDecoderOutput(sample=dec)
+
+if __name__ == '__main__':
+    vae = AutoencoderOobleck()
+    print(vae)

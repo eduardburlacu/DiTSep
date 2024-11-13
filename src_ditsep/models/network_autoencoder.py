@@ -238,3 +238,35 @@ class OobleckDecoder(nn.Module):
         hidden_state = self.conv2(hidden_state)
 
         return hidden_state
+
+if __name__ == "__main__":
+
+    audio_channels = 1
+    encoder_hidden_size = 256
+    decoder_channels = 256
+    decoder_input_channels = 64
+    sampling_rate = 8_000
+    downsampling_ratios = [2, 4, 4, 8, 8]
+    channel_multiples = [1, 2, 4, 8, 16]
+
+    encoder = OobleckEncoder(
+        encoder_hidden_size=encoder_hidden_size,
+        audio_channels=audio_channels,
+        downsampling_ratios=downsampling_ratios,
+        channel_multiples=channel_multiples,
+    )
+
+    decoder = OobleckDecoder(
+        channels=decoder_channels,
+        input_channels=decoder_input_channels,
+        audio_channels=audio_channels,
+        upsampling_ratios=downsampling_ratios[::-1],
+        channel_multiples=channel_multiples,
+    )
+
+    x = torch.randn(1, audio_channels, 8_000)
+    z = encoder(x)
+    x_hat = decoder(z)
+
+    print(f"Input shape: {x.shape}")
+    print(f"Output shape: {x_hat.shape}")
