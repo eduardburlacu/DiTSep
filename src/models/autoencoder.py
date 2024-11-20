@@ -248,10 +248,11 @@ if __name__ == '__main__':
     print(vae)
     print("______________________")
     print(x.shape)
-    
     import pdb; pdb.set_trace()
     posterior = vae.encode(x).latent_dist
     z = posterior.mode()
     print(z.shape)
     x_hat = vae.decode(z).sample
     print(x_hat.shape)
+    x_pad = vae.pad(x)
+    assert x_pad.shape == x_hat.shape
