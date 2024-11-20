@@ -21,7 +21,7 @@ class FixedClipper:
     def __init__(self, max_norm: float):
         self.max_norm = max_norm
 
-    def __call__(self, module: torch.nn.Module) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __call__(self, module: torch.nn.Module) -> Tuple[torch.Tensor, float]:
         grad_norm = torch.nn.utils.clip_grad_norm_(
             module.parameters(),
             max_norm=self.max_norm,

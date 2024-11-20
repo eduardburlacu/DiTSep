@@ -44,3 +44,5 @@ train: ## Train the model
 eval:
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_eval_1000 scripts/eval_libri.sh
 
+sleep:
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/sleeplog scripts/sleep.sh
