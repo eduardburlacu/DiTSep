@@ -29,17 +29,13 @@ Master Thesis Project at University of Cambridge.
 To construct the Python environment follow these steps:
 ```bash
 #Setup source separation env
-conda env create -f environment.yaml
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
-# install dependencies for repo
-pip install diffusers["torch"] transformers
-pip install -r requirements.txt
-# install PyTorch with GPU support. Please note this baseline is very lightweight so it can run fine on a CPU.
+conda env create -f env/environment.yaml
 ```
 
 ## Experiments
-### Experiment 1:
-**Motivation:** 
+### Training the OobleckVAE:
+
+We use the StabilityAI's [ `stable-audio-tools` ](https://github.com/Stability-AI/stable-audio-tools) to train an [OobleckVAE]{}
 
 **Tasks:** 
 * 
