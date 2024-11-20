@@ -14,11 +14,12 @@ from diffusers.utils import BaseOutput
 from diffusers.utils.accelerate_utils import apply_forward_hook
 from diffusers.models.modeling_utils import ModelMixin
 
-from network_autoencoder import (
+from models.network_autoencoder import (
     OobleckEncoder,
     OobleckDecoder,
     OobleckDiagonalGaussianDistribution
 )
+from utils.load_audio import load_audio
 
 
 @dataclass
@@ -139,6 +140,7 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
                 The latent representations of the encoded images. If `return_dict` is True, a
                 [`~models.autoencoder_kl.AutoencoderKLOutput`] is returned, otherwise a plain `tuple` is returned.
         """
+        x = self.pad(x)
         if self.use_slicing and x.shape[0] > 1:
             encoded_slices = [self.encoder(x_slice) for x_slice in x.split(1)]
             h = torch.cat(encoded_slices)
@@ -217,8 +219,17 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
 
         return OobleckDecoderOutput(sample=dec)
 
-if __name__ == '__main__':
+    def pad(self, x:torch.Tensor, pad_val:float = 0.0) -> torch.Tensor:
+        """
+        Pad the input tensor such that it is the closest multiple of the downsampling ratios product.
+        """
+        x_len = x.shape[-1]
+        pad_len = self.hop_length - (x_len % self.hop_length)
+        return torch.nn.functional.pad(x, (0, pad_len), value=pad_val)
 
+
+if __name__ == '__main__':
+    synth = False
     vae = AutoencoderOobleck(
         encoder_hidden_size = 128,
         downsampling_ratios = [2, 4, 4, 8, 8],
@@ -228,9 +239,17 @@ if __name__ == '__main__':
         audio_channels = 1,
         sampling_rate = 8_000
     )
-
-    x = torch.randn(1, 1, 80_000)
+    if synth:
+        x = torch.randn(1, 1, 80_000)
+    else:
+        path = '/data/milsrg1/corpora/LibriMix/Libri2Mix/wav16k/max/train-100/mix_both/6000-55211-0003_322-124146-0008.wav'
+        x = load_audio(path)
+        print(x[:,:,:10])
+    print(vae)
+    print("______________________")
     print(x.shape)
+    
+    import pdb; pdb.set_trace()
     posterior = vae.encode(x).latent_dist
     z = posterior.mode()
     print(z.shape)
