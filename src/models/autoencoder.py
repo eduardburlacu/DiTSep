@@ -81,7 +81,7 @@ class AutoencoderOobleck(ModelMixin, ConfigMixin):
         channel_multiples=[1, 2, 4, 8, 16],
         decoder_channels=128,
         decoder_input_channels = 64,
-        audio_channels=2,
+        audio_channels=1,
         sampling_rate=8_000, #from the Libri2Mix dataset
     ):
         super().__init__()
@@ -248,7 +248,6 @@ if __name__ == '__main__':
     print(vae)
     print("______________________")
     print(x.shape)
-    import pdb; pdb.set_trace()
     posterior = vae.encode(x).latent_dist
     z = posterior.mode()
     print(z.shape)
@@ -256,3 +255,4 @@ if __name__ == '__main__':
     print(x_hat.shape)
     x_pad = vae.pad(x)
     assert x_pad.shape == x_hat.shape
+    print(x_pad.shape)

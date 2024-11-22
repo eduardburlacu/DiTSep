@@ -4,16 +4,18 @@ import wandb
 from einops import rearrange
 from safetensors.torch import save_file, save_model
 from ema_pytorch import EMA
-from .losses.auraloss import SumAndDifferenceSTFTLoss, MultiResolutionSTFTLoss
+
 import pytorch_lightning as pl
-from ..models.autoencoders import AudioAutoencoder
-from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
-from .losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
-from .utils import create_optimizer_from_config, create_scheduler_from_config
-
-
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
+
+from models import AutoencoderOobleck
+from stable_audio_tools.training.losses import SumAndDifferenceSTFTLoss, MultiResolutionSTFTLoss
+from stable_audio_tools.models.autoencoders import AudioAutoencoder
+from stable_audio_tools.models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
+from stable_audio_tools.models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
+from stable_audio_tools.training.losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
+from stable_audio_tools.training.utils import create_optimizer_from_config, create_scheduler_from_config
+
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
@@ -23,7 +25,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             lr: float = 1e-4,
             warmup_steps: int = 0,
             encoder_freeze_on_warmup: bool = False,
-            sample_rate=48000,
+            sample_rate=8_000,
             loss_config: dict = None,
             optimizer_configs: dict = None,
             use_ema: bool = True,
@@ -119,23 +121,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.loss_config = loss_config
        
         # Spectral reconstruction loss
-
         stft_loss_args = loss_config['spectral']['config']
-
-        if self.autoencoder.out_channels == 2:
-            self.sdstft = SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-            self.lrstft = MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-        else:
-            self.sdstft = MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+        self.sdstft = MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
 
         # Discriminator
-
-        if loss_config['discriminator']['type'] == 'oobleck':
-            self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
-        elif loss_config['discriminator']['type'] == 'encodec':
-            self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.out_channels, **loss_config['discriminator']['config'])
-        elif loss_config['discriminator']['type'] == 'dac':
-            self.discriminator = DACGANLoss(channels=self.autoencoder.out_channels, sample_rate=sample_rate, **loss_config['discriminator']['config'])
+        self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.out_channels, **loss_config['discriminator']['config'])
 
         self.gen_loss_modules = []
 

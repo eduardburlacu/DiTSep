@@ -2,8 +2,6 @@
 Reference: https://github.com/Stability-AI/stable-audio-tools
 https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/stable_audio_transformer.py
 """
-import os
-import sys
 from typing import Any, Dict, Optional, Union
 from dataclasses import dataclass
 
@@ -19,10 +17,8 @@ from diffusers.models.attention_processor import (
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import is_torch_version, logging
 from diffusers.utils import BaseOutput
-#---Insert main project directory so that we can resolve the src imports---
-src_path = os.path.abspath(os.path.dirname(__file__))
-sys.path.insert(0, src_path)
-from network_dit import StableAudioGaussianFourierProjection, DiTSepBlock
+
+from models.network_dit import StableAudioGaussianFourierProjection, DiTSepBlock
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -64,17 +60,17 @@ class DiTSepModel(ModelMixin, ConfigMixin):
     @register_to_config
     def __init__(
         self,
-        sample_size: int = 1024,
+        sample_size: int = 121,
         in_channels: int = 64,
         num_layers: int = 24,
-        attention_head_dim: int = 64,
-        num_attention_heads: int = 24,
-        num_key_value_attention_heads: int = 12,
+        attention_head_dim: int = 8,
+        num_attention_heads: int = 8,
+        num_key_value_attention_heads: int = 8,
         out_channels: int = 64,
-        cross_attention_dim: int = 768,
-        time_proj_dim: int = 256,
-        global_states_input_dim: int = 1536,
-        cross_attention_input_dim: int = 768,
+        cross_attention_dim: int = 64,
+        time_proj_dim: int = 64,
+        global_states_input_dim: int = 64,
+        cross_attention_input_dim: int = 64,
     ):
         super().__init__()
         self.sample_size = sample_size
@@ -307,7 +303,7 @@ class DiTSepModel(ModelMixin, ConfigMixin):
         return Transformer2DModelOutput(sample=hidden_states)
 
 if __name__ == "__main__":
-
+    """
     from autoencoder import AutoencoderOobleck
     vae = AutoencoderOobleck(
         encoder_hidden_size = 128,
@@ -319,14 +315,8 @@ if __name__ == "__main__":
         sampling_rate = 8_000
     )
     vae.eval()
+    """
     dit = DiTSepModel()
     dit.eval()
-    with torch.no_grad():
-        import torchaudio
-        path = '/data/milsrg1/corpora/LibriMix/Libri2Mix/wav8k/max/train-100/mix_both/6000-55211-0003_322-124146-0008.wav'
-        waveform, sample_rate = torchaudio.load(path)
-        waveform = waveform.unsqueeze(0)  # Add batch dimension of 1
-        x = waveform
-        z = vae.encode(x).latent_dist.sample()
-        print(z.shape)
-
+    print(sum(p.numel() for p in dit.parameters())/1E6)
+    
