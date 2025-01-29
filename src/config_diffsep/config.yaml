@@ -1,0 +1,30 @@
+defaults:
+    - _self_
+    - datamodule: default
+    - model: default
+    - trainer: default
+    - experiment: null
+
+seed: 64736289
+name: default  # experiment name
+train: true
+test: false
+
+path:
+    exp_root: exp
+    datasets:
+        wsj0_mix: /data/milsrg1/corpora/WSJ0-mix
+        valentini: data/VCTK_DEMAND
+        libri_mix: /data/milsrg1/corpora/LibriMix
+    figures: figures
+    
+hydra:
+    run:
+        dir: ${path.exp_root}/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${hydra.job.override_dirname}
+    job:
+        config:
+            override_dirname:
+                kv_sep: '-'
+                item_sep: '_'
+                exclude_keys: 
+                    - path.exp_root
