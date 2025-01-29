@@ -153,3 +153,6 @@ dmypy.json
 
 # Aim logging
 .aim
+
+# Checkpoints
+checkpoints/*

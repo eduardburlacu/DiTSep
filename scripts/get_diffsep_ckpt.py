@@ -1,5 +1,5 @@
 from huggingface_hub import hf_hub_download
-from src.models.diffsep.pl_model import DiffSepModel
+from src.models_prot.diffsep.pl_model import DiffSepModel
 import argparse
 from pathlib import Path
 

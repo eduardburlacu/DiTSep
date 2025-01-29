@@ -1,6 +1,6 @@
 import torch
 from huggingface_hub import hf_hub_download
-from src.models.facodec import FACodecEncoder,FACodecDecoder
+from src.models_prot.facodec import FACodecEncoder,FACodecDecoder
 
 
 fac_encoder = FACodecEncoder(
