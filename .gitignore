@@ -149,6 +149,8 @@ dmypy.json
 /data/
 /logs/
 /LOGS/
+docs/notebooks/
+exp/
 .env
 
 # Aim logging
