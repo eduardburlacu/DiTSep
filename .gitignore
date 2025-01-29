@@ -152,7 +152,7 @@ dmypy.json
 docs/notebooks/
 exp/
 .env
-
+src/*.sh
 # Aim logging
 .aim
 
