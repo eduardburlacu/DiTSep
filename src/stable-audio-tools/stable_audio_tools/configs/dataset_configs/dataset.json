@@ -1,0 +1,70 @@
+{
+    "train_2mix": {
+        "dl_opts": {
+            "num_workers": 8,
+            "shuffle": false,
+            "batch_size": 4
+        },
+        "dataset": {
+            "path": "/data/milsrg1/corpora/LibriMix/",
+            "n_spkr": 2,
+            "fs": 8000,
+            "cut": "max",
+            "split": "libri2mix_train",
+            "max_len_s": null,
+            "max_n_samples": null,
+            "mix_dir": "mix_both"
+        }
+    },
+    "train_3mix": {
+        "dl_opts": {
+            "num_workers": 8,
+            "shuffle": false,
+            "batch_size": 16
+        },
+        "dataset": {
+            "path": "/data/milsrg1/corpora/LibriMix/",
+            "n_spkr": 3,
+            "fs": 8000,
+            "cut": "max",
+            "split": "libri3mix_train",
+            "max_len_s": null,
+            "max_n_samples": null,
+            "mix_dir": "mix_both"
+        }
+    },
+    "test_2mix": {
+        "dl_opts": {
+            "num_workers": 8,
+            "shuffle": false,
+            "batch_size": 16
+        },
+        "dataset": {
+            "path": "/data/milsrg1/corpora/LibriMix/",
+            "n_spkr": 2,
+            "fs": 8000,
+            "cut": "max",
+            "split": "libri2mix_test",
+            "max_len_s": null,
+            "max_n_samples": null,
+            "mix_dir": "mix_both"
+        }
+    },
+    "test_3mix": {
+        "dl_opts": {
+            "num_workers": 8,
+            "shuffle": false,
+            "batch_size": 16
+        },
+        "dataset": {
+            "path": "/data/milsrg1/corpora/LibriMix/",
+            "n_spkr": 2,
+            "fs": 8000,
+            "cut": "max",
+            "split": "libri3mix_test",
+            "max_len_s": null,
+            "max_n_samples": null,
+            "mix_dir": "mix_both"
+        }
+    }
+}
