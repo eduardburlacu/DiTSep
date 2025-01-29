@@ -1,7 +1,10 @@
 """
-Reference: https://github.com/Stability-AI/stable-audio-tools
-https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/stable_audio_transformer.py
+Reference: 
+    https://github.com/Stability-AI/stable-audio-tools
+Implementation relies on: 
+    https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/stable_audio_transformer.py
 """
+
 from typing import Any, Dict, Optional, Union
 from dataclasses import dataclass
 
@@ -73,6 +76,7 @@ class DiTSepModel(ModelMixin, ConfigMixin):
         cross_attention_input_dim: int = 64,
     ):
         super().__init__()
+
         self.sample_size = sample_size
         self.out_channels = out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
