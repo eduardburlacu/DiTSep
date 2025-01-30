@@ -777,8 +777,7 @@ class LatentDiffSepModel(DiffSepModel):
         os.environ["HYDRA_FULL_ERROR"] = "1"
         #Instantiate the 3 models
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
-        self.encoder = instantiate(self.config.model.vae.encoder, _recursive_=False)
-        self.decoder = instantiate(self.config.model.vae.decoder, _recursive_=False)
+        self.vae = instantiate(self.config.model.vae, _recursive_=False)
 
         self.valid_max_sep_batches = getattr(
             self.config.model, "valid_max_sep_batches", 1
@@ -821,3 +820,21 @@ class LatentDiffSepModel(DiffSepModel):
 
         self.normalize_batch = normalize_batch
         self.denormalize_batch = denormalize_batch
+
+    def separate(self, mix, **kwargs):
+        mix_latent = self.vae.encode(mix).sample()
+        (mix_latent, _), *stats = self.normalize_batch((mix_latent, None))
+        sampler_kwargs = self.config.model.sampler.copy()
+        with open_dict(sampler_kwargs):
+            sampler_kwargs.update(kwargs, merge=True)
+        
+        #Reverse sampling
+        sampler = self.get_pc_sampler(
+            "reverse_diffusion", "ald2", mix_latent, **sampler_kwargs
+        )
+
+        est_latent, *others = sampler()
+
+        est_latent = self.denormalize_batch(est_latent, *stats)
+        est = self.vae.decode(mix)
+        return sampler()

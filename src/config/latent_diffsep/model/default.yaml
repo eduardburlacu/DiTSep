@@ -31,7 +31,7 @@ score_model:
 sde:
     _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
-    d_lambda: 2.0
+    theta: 1.5
     sigma_min: 0.05
     sigma_max: 0.5
     N: 1000
