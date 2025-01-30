@@ -1,14 +1,14 @@
 ---
 title: DiTSep
 labels: [Source Separation, Diffusion Models ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
-dataset: [WSJ0-2mix, WSJ0-3mix, Libri2mix, WHARM!, WHAM!] # list of datasets you include in your baseline
+dataset: [WSJ0-2mix, WSJ0-3mix, Libri2mix, Libri3mix] # list of datasets you include in your baseline
 ---
 
-# Diffusion Models for Source Separation and Extraction
-Master Thesis Project at University of Cambridge. 
+# Latent Diffusion Model for Source Separation
+Master Thesis Project at University of Cambridge.
 
-**Site link:** \
-**Paper link:** \
+<!--**Site link:** \-->
+<!--**Paper link:** \-->
 **Author:** Eduard Burlacu \
 **Supervisors:** Brian Sun, Phil Woodland
 
@@ -17,7 +17,7 @@ Master Thesis Project at University of Cambridge.
 ## About this project
 **What's implemented:** Source code used for producing the results in _____ paper.
 
-**Datasets:**
+**Datasets: Libri2Mix, WSJ0-2mix**
 * 
  
 **Hardware Setup:** These experiments were run on ___
@@ -35,10 +35,11 @@ conda env create -f env/environment.yaml
 ## Experiments
 ### Training the OobleckVAE:
 
-We use the StabilityAI's [ `stable-audio-tools` ](https://github.com/Stability-AI/stable-audio-tools) to train an [OobleckVAE]{}
+We use the StabilityAI's [ `stable-audio-tools` ](https://github.com/Stability-AI/stable-audio-tools) to train an [ `OobleckVAE` ](https://huggingface.co/docs/diffusers/v0.30.3/en/api/models/autoencoder_oobleck) specially-designed for source separation, being able to encode and reconstruct multi-speaker audio samples.
 
-**Tasks:** 
-* 
+
+**Useful for these Tasks:** 
+Blind Source Separation, Speech Enhancement, Target Speaker Extraction
 
 **Models:** This directory implements the following models:
 - 
