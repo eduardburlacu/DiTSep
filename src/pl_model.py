@@ -761,3 +761,63 @@ class DiffSepModel(pl.LightningModule):
                     return samples, ns
 
             return batched_sampling_fn
+
+
+class LatentDiffSepModel(DiffSepModel):
+    def __init__(self, config):
+        # init superclass
+        super(self, LatentDiffSepModel).__init__(config)
+
+        self.save_hyperparameters()
+
+        # the config and all hyperparameters are saved by hydra to the experiment dir
+        self.config = config
+        self.config = Prodict.from_dict(self.config)
+        
+        os.environ["HYDRA_FULL_ERROR"] = "1"
+        #Instantiate the 3 models
+        self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
+        self.encoder = instantiate(self.config.model.vae.encoder, _recursive_=False)
+        self.decoder = instantiate(self.config.model.vae.decoder, _recursive_=False)
+
+        self.valid_max_sep_batches = getattr(
+            self.config.model, "valid_max_sep_batches", 1
+        )
+        self.sde = instantiate(self.config.model.sde)
+        self.t_eps = self.config.model.t_eps
+        self.t_max = self.sde.T
+        self.time_sampling_strategy = getattr(
+            self.config.model, "time_sampling_strategy", "uniform"
+        )
+        self.init_hack = getattr(self.config.model, "init_hack", False)
+        self.init_hack_p = getattr(self.config.model, "init_hack_p", 1.0 / self.sde.N)
+        self.t_rev_init = getattr(self.config.model, "t_rev_init", 0.03)
+        log.info(f"Sampling time in [{self.t_eps, self.t_max}]")
+
+        self.lr_warmup = getattr(config.model, "lr_warmup", None)
+        self.lr_original = self.config.model.optimizer.lr
+
+        self.train_source_order = getattr(
+            self.config.model, "train_source_order", "random"
+        )
+
+        # configure the loss functions
+        if self.init_hack in [5, 6, 7]:
+            if "reduction" not in self.config.model.loss:
+                self.loss = instantiate(self.config.model.loss, reduction="none")
+            elif self.config.model.loss.reduction != "none":
+                raise ValueError("Reduction should 'none' for loss with init_hack == 5")
+        else:
+            self.loss = instantiate(self.config.model.loss)
+        
+        self.val_losses = {}
+        for name, loss_args in self.config.model.val_losses.items():
+            self.val_losses[name] = instantiate(loss_args)
+
+        # for moving average of weights
+        self.ema_decay = getattr(self.config.model, "ema_decay", 0.0)
+        self.ema = ExponentialMovingAverage(self.parameters(), decay=self.ema_decay)
+        self._error_loading_ema = False
+
+        self.normalize_batch = normalize_batch
+        self.denormalize_batch = denormalize_batch
