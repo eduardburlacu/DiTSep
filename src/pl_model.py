@@ -1,6 +1,3 @@
-# 2023 (c) LINE Corporation
-# Authors: Robin Scheibler
-# MIT License
 import datetime
 import itertools
 import json
@@ -20,7 +17,9 @@ from scipy.optimize import linear_sum_assignment
 from torch_ema import ExponentialMovingAverage
 
 from prodict import Prodict
+
 import sdes
+from stable_audio_tools.models import create_model_from_config
 import utils
 
 log = logging.getLogger(__name__)
@@ -777,7 +776,7 @@ class LatentDiffSepModel(DiffSepModel):
         os.environ["HYDRA_FULL_ERROR"] = "1"
         #Instantiate the 3 models
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
-        self.vae = instantiate(self.config.model.vae, _recursive_=False)
+        self.vae = utils.load_stable_model(self.config.model.vae)
 
         self.valid_max_sep_batches = getattr(
             self.config.model, "valid_max_sep_batches", 1
@@ -822,7 +821,11 @@ class LatentDiffSepModel(DiffSepModel):
         self.denormalize_batch = denormalize_batch
 
     def separate(self, mix, **kwargs):
-        mix_latent = self.vae.encode(mix).sample()
+        #pad the mix to match the VAE input size
+        mix = utils.pad(mix, self.vae.encoder.hop_length)
+        with torch.no_grad():
+            mix_latent = self.autoencoder.encode(encoder_input)
+
         (mix_latent, _), *stats = self.normalize_batch((mix_latent, None))
         sampler_kwargs = self.config.model.sampler.copy()
         with open_dict(sampler_kwargs):
@@ -836,5 +839,45 @@ class LatentDiffSepModel(DiffSepModel):
         est_latent, *others = sampler()
 
         est_latent = self.denormalize_batch(est_latent, *stats)
-        est = self.vae.decode(mix)
-        return sampler()
+        return self.vae.decode(sampler()) #TODO: check if we need to return est
+    
+    def sample_prior(self, mix, target):
+        ...
+        return super().sample_prior(mix, target)
+
+    def compute_score_loss_with_pit(self, mix, target):
+        ...
+        return super().compute_score_loss_with_pit(mix, target)
+    
+    def compute_score_loss_with_pit_allthetime(self, mix, target):
+        ...
+        return super().compute_score_loss_with_pit_allthetime(mix, target)
+    
+    def compute_score_loss_init_hack_pit(self, mix, target):
+        ...
+        return super().compute_score_loss_init_hack_pit(mix, target)
+    
+    def forward(self, xt, time, mix):
+        ...
+        return super().forward(xt, time, mix)
+    
+    def training_step(self, batch, batch_idx):
+        ...
+        return super().training_step(batch, batch_idx)
+    
+    def validation_step(self, batch, batch_idx, dataset_i=0):
+        ...
+        return super().validation_step(batch, batch_idx, dataset_i)
+    
+    def on_validation_epoch_start(self, outputs=None):
+        ...
+        return super().on_validation_epoch_start(outputs)
+    
+    def on_validation_epoch_end(self, outputs=None):
+        ...
+        return super().on_validation_epoch_end(outputs)
+    
+    def train(self, mode=True, no_ema=False):
+        ...
+        return super().train(mode, no_ema)
+    

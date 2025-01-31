@@ -8,6 +8,16 @@ def count_parameters(module):
     return param_count
 
 
+@torch.no_grad()
+def pad(x:torch.Tensor, hop_length:int, pad_val:float = 0.0) -> torch.Tensor:
+    """
+    Pad the input tensor such that it is the closest multiple of the downsampling ratios product.
+    """
+    x_len = x.shape[-1]
+    pad_len = hop_length - (x_len % hop_length)
+    return torch.nn.functional.pad(x, (0, pad_len), value=pad_val)
+
+
 def to_device(data, device="cpu", to_numpy=False):
     """recursively transfers tensors to cpu"""
     if to_numpy and device != "cpu":

@@ -29,7 +29,8 @@ score_model:
     spec_trans_learnable: false
 
 vae:
-    _target_: src.stable-audio-tools
+    ckpt_path: ""
+    config_path: ""
 
 sde:
     _target_: src.sdes.sdes.OUVESDE
