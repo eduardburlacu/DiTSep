@@ -13,7 +13,7 @@ init_hack: false
 mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
 
 score_model:
-    _target_: models.score_models.ScoreModelNCSNpp
+    _target_: src.models.score_models.ScoreModelNCSNpp
     num_sources: ${model.n_speakers}
     stft_args:
         n_fft: 510
@@ -21,15 +21,18 @@ score_model:
         center: True
         pad_mode: "constant"
     backbone_args:
-        _target_: models.ncsnpp.NCSNpp
+        _target_: src.models.ncsnpp.NCSNpp
         nf: 64
     transform: exponent
     spec_abs_exponent: 0.5
     spec_factor: 0.33
     spec_trans_learnable: false
 
+vae:
+    _target_: src.stable-audio-tools
+
 sde:
-    _target_: sdes.sdes.OUVESDE
+    _target_: src.sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
     theta: 1.5
     sigma_min: 0.05
