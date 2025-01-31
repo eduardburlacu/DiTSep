@@ -777,6 +777,7 @@ class LatentDiffSepModel(DiffSepModel):
         #Instantiate the 3 models
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
         self.vae = utils.load_stable_model(self.config.model.vae)
+        self.vae.requires_grad_(False)
 
         self.valid_max_sep_batches = getattr(
             self.config.model, "valid_max_sep_batches", 1
@@ -837,9 +838,9 @@ class LatentDiffSepModel(DiffSepModel):
         )
 
         est_latent, *others = sampler()
-
         est_latent = self.denormalize_batch(est_latent, *stats)
-        return self.vae.decode(sampler()) #TODO: check if we need to return est
+        
+        return self.vae.decode(est_latent)
     
     def sample_prior(self, mix, target):
         ...
