@@ -1,6 +1,7 @@
 """
 Abstract SDE classes, Reverse SDE, and VE/VP SDEs.
-Taken and adapted from https://github.com/yang-song/score_sde_pytorch/blob/1618ddea340f3e4a2ed7852a0694a809775cf8d0/sde_lib.py
+Taken and adapted from 
+https://github.com/yang-song/score_sde_pytorch/blob/1618ddea340f3e4a2ed7852a0694a809775cf8d0/sde_lib.py
 """
 import abc
 import math

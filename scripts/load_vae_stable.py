@@ -1,7 +1,7 @@
 import os
 import json
 import torch
-from stable_audio_tools.models import create_model_from_config
+from ..src.stable_audio_tools.models import create_model_from_config
 
 ckpt_path = os.path.join(
     os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "checkpoints", "vae", "vae_finetune.ckpt"

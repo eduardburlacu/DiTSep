@@ -12,89 +12,21 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 from hydra.utils import instantiate, to_absolute_path
+from omegaconf import DictConfig
 from omegaconf.omegaconf import open_dict
 from scipy.optimize import linear_sum_assignment
 from torch_ema import ExponentialMovingAverage
 
-from prodict import Prodict
 
 import sdes
-from stable_audio_tools.models import create_model_from_config
 import utils
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
 
-def shuffle_sources(x):
-    """
-    Shuffle along the second dimension with a different permutation for each
-    batch entry
-    """
-    if x.ndim <= 1:
-        return x
-
-    n_extra_dim = x.ndim - 2
-
-    # generate a random permutation per batch entry
-    c = x.new_zeros(x.shape[:2]).uniform_()
-    idx = torch.argsort(c, dim=1)
-    idx = torch.broadcast_to(idx[(...,) + (None,) * n_extra_dim], x.shape)
-
-    # re-order the target tensor
-    x = torch.gather(x, dim=1, index=idx)
-
-    return x
-
-
-def select_elem_at_random(x, dim=-1, batch_dim=0):
-    x = x.moveaxis(dim, -1)
-    select = torch.randint(x.shape[-1], size=(x.shape[batch_dim],), device=x.device)
-    select = torch.broadcast_to(
-        select[(...,) + (None,) * (x.ndim - 1)], x.shape[:-1] + (1,)
-    )
-    x = torch.gather(x, dim=-1, index=select)
-    x = x.moveaxis(-1, dim)
-    return x
-
-
-def power_order_sources(x):
-    """
-    Shuffle along the second dimension with a different permutation for each
-    batch entry
-    """
-    if x.ndim <= 1:
-        return x
-
-    n_extra_dim = x.ndim - 2
-
-    # generate a random permutation per batch entry
-    c = torch.var(x, dim=-1)
-    idx = torch.argsort(c, dim=1)
-    idx = torch.broadcast_to(idx[(...,) + (None,) * n_extra_dim], x.shape)
-
-    # re-order the target tensor
-    x = torch.gather(x, dim=1, index=idx)
-
-    return x
-
-
-def normalize_batch(batch):
-    mix, tgt = batch
-    mean = mix.mean(dim=(1, 2), keepdim=True)
-    std = mix.std(dim=(1, 2), keepdim=True).clamp(min=1e-5)
-    mix = (mix - mean) / std
-    if tgt is not None:
-        tgt = (tgt - mean) / std
-    return (mix, tgt), mean, std
-
-
-def denormalize_batch(x, mean, std):
-    return x * std + mean
-
-
 class DiffSepModel(pl.LightningModule):
-    def __init__(self, config):
+    def __init__(self, config:DictConfig):
         # init superclass
         super().__init__()
 
@@ -102,7 +34,7 @@ class DiffSepModel(pl.LightningModule):
 
         # the config and all hyperparameters are saved by hydra to the experiment dir
         self.config = config
-        self.config = Prodict.from_dict(self.config)
+        #self.config = Prodict.from_dict(self.config)
         
         os.environ["HYDRA_FULL_ERROR"] = "1"
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
@@ -145,8 +77,8 @@ class DiffSepModel(pl.LightningModule):
         self.ema = ExponentialMovingAverage(self.parameters(), decay=self.ema_decay)
         self._error_loading_ema = False
 
-        self.normalize_batch = normalize_batch
-        self.denormalize_batch = denormalize_batch
+        self.normalize_batch = utils.normalize_batch
+        self.denormalize_batch = utils.denormalize_batch
 
     def separate(self, mix, **kwargs):
 
@@ -268,7 +200,7 @@ class DiffSepModel(pl.LightningModule):
         Lz = self.sde.mult_std(L, z)
 
         # select one of the permutations at random
-        mean_select = select_elem_at_random(means, dim=1)
+        mean_select = utils.select_elem_at_random(means, dim=1)
         xt = mean_select + Lz[:, None, ...]
 
         # compute the model mismatch to noise ratio
@@ -333,7 +265,7 @@ class DiffSepModel(pl.LightningModule):
         # sample time
         time = self.sample_time(target)
 
-        target = shuffle_sources(target)
+        target = utils.shuffle_sources(target)
 
         # compute the reference mean
         mean_0, L = self.sde.marginal_prob(target, time, mix)
@@ -441,7 +373,7 @@ class DiffSepModel(pl.LightningModule):
 
         if n_pit != mix.shape[0]:
             # loss without pit
-            target_nopit = shuffle_sources(target[~pit])
+            target_nopit = utils.shuffle_sources(target[~pit])
             loss_nopit = self.compute_score_loss(mix[~pit], target_nopit)
             losses.append(loss_nopit)
 
@@ -462,7 +394,7 @@ class DiffSepModel(pl.LightningModule):
 
         if n_pit != mix.shape[0]:
             # loss without pit
-            target_no_init = shuffle_sources(target[~pit])
+            target_no_init = utils.shuffle_sources(target[~pit])
             loss_not_init = self.compute_score_loss_with_pit(mix[~pit], target_no_init)
             losses.append(loss_not_init)
 
@@ -512,9 +444,9 @@ class DiffSepModel(pl.LightningModule):
         else:
 
             if self.train_source_order == "power":
-                target = power_order_sources(target)
+                target = utils.power_order_sources(target)
             elif self.train_source_order == "random":
-                target = shuffle_sources(target)
+                target = utils.shuffle_sources(target)
 
             loss = self.compute_score_loss(mix, target)
 
@@ -760,10 +692,42 @@ class DiffSepModel(pl.LightningModule):
                     return samples, ns
 
             return batched_sampling_fn
+        
+    def get_ode_sampler(self, y, N=None, minibatch=1, **kwargs):
+        """
+        Use PF-ODE sampler at inference time for the given target y.
+        https://github.com/sp-uhh/storm/blob/257e9636a7251ca40aa200753d5c0fe918e31879/sgmse/sampling/__init__.py#L119
+        """
+        N = self.sde.N if N is None else N
+        sde = self.sde.copy()
+        sde.N = N
+        kwargs = {"eps": self.t_eps, **kwargs}
+        
+        if minibatch is None:
+            return sdes.get_ode_sampler(
+                sde, self, y=y, **kwargs
+            )
+        
+        else:
+            M = y.shape[0]
+            def batched_sampling_fn():
+                samples, ns = [], []
+                for i in range(int(math.ceil(M / minibatch))):
+                    y_mini = y[i * minibatch : (i + 1) * minibatch]
+                    sampler = sdes.get_ode_sampler(
+                        sde, self, y=y_mini, **kwargs
+                    )
+                    sample, n = sampler()
+                    samples.append(sample)
+                    ns.append(n)
+                samples = torch.cat(samples, dim=0)
+                return samples, ns
+            return batched_sampling_fn
+
 
 
 class LatentDiffSepModel(DiffSepModel):
-    def __init__(self, config):
+    def __init__(self, config: DictConfig):
         # init superclass
         super(self, LatentDiffSepModel).__init__(config)
 
@@ -771,13 +735,24 @@ class LatentDiffSepModel(DiffSepModel):
 
         # the config and all hyperparameters are saved by hydra to the experiment dir
         self.config = config
-        self.config = Prodict.from_dict(self.config)
         
         os.environ["HYDRA_FULL_ERROR"] = "1"
         #Instantiate the 3 models
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
-        self.vae = utils.load_stable_model(self.config.model.vae)
-        self.vae.requires_grad_(False)
+        vae = utils.load_stable_model(
+            self.config.model.vae.ckpt_path,
+            self.config.model.vae.config_path,
+            verbose=False,
+            )
+        if self.config.model.trainable_vae:
+            #we add the training wrapper for VAE optimization
+            vae.requires_grad_(True)
+            vae.train()
+            self.vae = vae
+        else:
+            vae.requires_grad_(False)
+            vae.eval()
+            self.vae = vae
 
         self.valid_max_sep_batches = getattr(
             self.config.model, "valid_max_sep_batches", 1
@@ -818,14 +793,14 @@ class LatentDiffSepModel(DiffSepModel):
         self.ema = ExponentialMovingAverage(self.parameters(), decay=self.ema_decay)
         self._error_loading_ema = False
 
-        self.normalize_batch = normalize_batch
-        self.denormalize_batch = denormalize_batch
+        self.normalize_batch = utils.normalize_batch
+        self.denormalize_batch = utils.denormalize_batch
 
     def separate(self, mix, **kwargs):
         #pad the mix to match the VAE input size
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         with torch.no_grad():
-            mix_latent = self.autoencoder.encode(encoder_input)
+            mix_latent = self.vae.encode(mix)
 
         (mix_latent, _), *stats = self.normalize_batch((mix_latent, None))
         sampler_kwargs = self.config.model.sampler.copy()
@@ -839,7 +814,7 @@ class LatentDiffSepModel(DiffSepModel):
 
         est_latent, *others = sampler()
         est_latent = self.denormalize_batch(est_latent, *stats)
-        
+
         return self.vae.decode(est_latent)
     
     def sample_prior(self, mix, target):
@@ -857,28 +832,71 @@ class LatentDiffSepModel(DiffSepModel):
     def compute_score_loss_init_hack_pit(self, mix, target):
         ...
         return super().compute_score_loss_init_hack_pit(mix, target)
-    
-    def forward(self, xt, time, mix):
-        ...
-        return super().forward(xt, time, mix)
-    
+
     def training_step(self, batch, batch_idx):
-        ...
-        return super().training_step(batch, batch_idx)
+        batch, *stats = self.normalize_batch(batch)
+        mix, target = batch
+        with torch.no_grad():
+            mix_latent = self.vae.encode(mix)
+            target_latent = self.vae.encode(target)
+
+        if self.init_hack == 7:
+            loss = self.train_step_init_7(mix_latent, target_latent)
+        elif self.init_hack == 6:
+            loss = self.train_step_init_6(mix_latent, target_latent)
+        elif self.init_hack == 5:
+            loss = self.train_step_init_5(mix_latent, target_latent)
+        elif self.train_source_order == "pit":
+            loss = self.compute_score_loss_with_pit(mix_latent, target_latent)
+        else:
+            if self.train_source_order == "power":
+                target_latent = utils.power_order_sources(target_latent)
+            elif self.train_source_order == "random":
+                target_latent = utils.shuffle_sources(target_latent)
+
+            loss = self.compute_score_loss(mix_latent, target_latent)
+
+        # every 10 steps, we log stuff
+        cur_step = self.trainer.global_step
+        self.last_step = getattr(self, "last_step", 0)
+        if cur_step > self.last_step and cur_step % 10 == 0:
+            self.last_step = cur_step
+
+            # log the classification metrics
+            self.logger.log_metrics(
+                {"train/score_loss": loss},
+                step=cur_step,
+            )
+        self.do_lr_warmup()
+
+        return loss
+
     
     def validation_step(self, batch, batch_idx, dataset_i=0):
-        ...
-        return super().validation_step(batch, batch_idx, dataset_i)
-    
-    def on_validation_epoch_start(self, outputs=None):
-        ...
-        return super().on_validation_epoch_start(outputs)
-    
-    def on_validation_epoch_end(self, outputs=None):
-        ...
-        return super().on_validation_epoch_end(outputs)
-    
-    def train(self, mode=True, no_ema=False):
-        ...
-        return super().train(mode, no_ema)
-    
+        batch, *stats = self.normalize_batch(batch)
+
+        mix, target = batch
+        with torch.no_grad():
+            mix = self.vae.encode(mix)
+            target = self.vae.encode(target)
+
+        # validation score loss
+        if self.init_hack == 7:
+            loss = self.train_step_init_7(mix, target)
+        elif self.init_hack == 6:
+            loss = self.train_step_init_6(mix, target)
+        elif self.init_hack == 5:
+            loss = self.train_step_init_5(mix, target)
+        else:
+            loss = self.compute_score_loss(mix, target)
+        self.log("val/score_loss", loss, on_epoch=True, sync_dist=True)
+
+        # validation separation losses
+        if self.trainer.testing or self.n_batches_est_done < self.valid_max_sep_batches:
+            self.n_batches_est_done += 1
+            est, *_ = self.separate(mix)
+
+            est = self.denormalize_batch(est, *stats)
+
+            for name, loss in self.val_losses.items():
+                self.log(name, loss(est, target), on_epoch=True, sync_dist=True)

@@ -1646,7 +1646,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
         demo_every=2000,
         demo_steps=250,
         sample_size=65536,
-        sample_rate=48000
+        sample_rate=8000
     ):
         super().__init__()
         self.demo_every = demo_every

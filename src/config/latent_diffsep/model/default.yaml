@@ -29,8 +29,8 @@ score_model:
     spec_trans_learnable: false
 
 vae:
-    ckpt_path: ""
-    config_path: ""
+    ckpt_path: "../checkpoints/vae/vae_finetune.ckpt"
+    config_path: "stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
 
 sde:
     _target_: src.sdes.sdes.OUVESDE

@@ -13,7 +13,7 @@ init_hack: false
 mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
 
 score_model:
-    _target_: models.score_models.ScoreModelNCSNpp
+    _target_: models.diffsep.score_models.ScoreModelNCSNpp
     num_sources: ${model.n_speakers}
     stft_args:
         n_fft: 510
@@ -21,7 +21,7 @@ score_model:
         center: True
         pad_mode: "constant"
     backbone_args:
-        _target_: models.ncsnpp.NCSNpp
+        _target_: models.diffsep.ncsnpp.NCSNpp
         nf: 64
     transform: exponent
     spec_abs_exponent: 0.5
@@ -48,7 +48,7 @@ main_val_loss: val/si_sdr
 main_val_loss_mode: max
 val_losses:
     val/si_sdr:
-        _target_: models.losses.SISDRLoss
+        _target_: models.diffsep.losses.SISDRLoss
         zero_mean: true
         clamp_db: 30
         reduction: mean

@@ -153,6 +153,7 @@ docs/notebooks/
 exp/
 .env
 src/*.sh
+src/stable_audio_tools/configs/
 # Aim logging
 .aim
 

@@ -1,6 +1,3 @@
-# 2023 (c) LINE Corporation
-# Authors: Robin Scheibler
-# MIT License
 import copy
 import logging
 import os
@@ -12,6 +9,7 @@ import torch
 import yaml
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import instantiate, to_absolute_path
+from omegaconf import DictConfig
 from pytorch_lightning import loggers as pl_loggers
 from tqdm import tqdm
 from pynvml import nvmlInit, nvmlSystemGetDriverVersion
@@ -85,8 +83,8 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config", config_name="config")
-def main(cfg):
+@hydra.main(config_path="./config/diffsep", config_name="config")
+def main(cfg: DictConfig):
     try:
         nvmlInit()
         print("NVML Initialized")
@@ -97,7 +95,7 @@ def main(cfg):
         exit(1)
 
     os.environ['LD_LIBRARY_PATH'] = f"{os.environ['CONDA_PREFIX']}/lib:{os.environ.get('LD_LIBRARY_PATH', '')}"
-
+    
     if utils.ddp.is_rank_zero():
         exp_name = HydraConfig().get().run.dir
         log.info(f"Start experiment: {exp_name}")
@@ -142,12 +140,35 @@ def main(cfg):
     model, is_pretrained = load_model(cfg)
 
     # create a logger
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")
+    if cfg.logger == "wandb":
+        pl_logger = pl_loggers.WandbLogger(
+            project="diffsep", 
+            save_dir=".",
+            mode="online"
+        ) # TODO Change to online when ready
+    elif cfg.logger == "tensorboard":
+        pl_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")
 
+    else:
+        pl_logger = None
     # most basic trainer, uses good defaults (auto-tensorboard, checkpoints,
     # logs, and more)
+    pl_logger.watch(model)
 
-    trainer = instantiate(cfg.trainer, callbacks=callbacks, logger=tb_logger)
+    #trainer = instantiate(cfg.trainer, callbacks=callbacks, logger=tb_logger)
+    trainer = pl.Trainer(
+        devices=[1], #args.num_gpus
+        accelerator="gpu", #"cpu"
+        detect_anomaly=True, #
+        fast_dev_run=False, #
+        num_nodes = 1,
+        accumulate_grad_batches=2, 
+        callbacks=callbacks,
+        logger=pl_logger,
+        log_every_n_steps=1_000, #memory usage vital?!
+        max_epochs=1_000_000,
+        reload_dataloaders_every_n_epochs = 0
+    )
 
     if cfg.train:
         log.info("start training")
