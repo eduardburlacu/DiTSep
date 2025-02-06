@@ -106,8 +106,6 @@ def main(cfg: DictConfig):
     # seed all RNGs for deterministic behavior
     pl.seed_everything(cfg.seed)
 
-    torch.autograd.set_detect_anomaly(True)
-
     callbacks = []
     # Use a fancy progress bar
     callbacks.append(pl.callbacks.RichProgressBar())
@@ -148,7 +146,6 @@ def main(cfg: DictConfig):
         ) # TODO Change to online when ready
     elif cfg.logger == "tensorboard":
         pl_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")
-
     else:
         pl_logger = None
     # most basic trainer, uses good defaults (auto-tensorboard, checkpoints,
@@ -157,17 +154,18 @@ def main(cfg: DictConfig):
 
     #trainer = instantiate(cfg.trainer, callbacks=callbacks, logger=tb_logger)
     trainer = pl.Trainer(
-        devices=[1], #args.num_gpus
+        devices=1, #args.num_gpus, [1] for the second GPU, [0, 1] for the first and second GPU etc.
         accelerator="gpu", #"cpu"
-        detect_anomaly=True, #
+        detect_anomaly=False, #
         fast_dev_run=False, #
         num_nodes = 1,
-        accumulate_grad_batches=2, 
+        accumulate_grad_batches=8, 
         callbacks=callbacks,
         logger=pl_logger,
-        log_every_n_steps=1_000, #memory usage vital?!
-        max_epochs=1_000_000,
-        reload_dataloaders_every_n_epochs = 0
+        check_val_every_n_epoch=1,
+        max_epochs=1_000,
+        reload_dataloaders_every_n_epochs = 0,
+        gradient_clip_val=2.0,
     )
 
     if cfg.train:

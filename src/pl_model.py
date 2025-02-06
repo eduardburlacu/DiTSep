@@ -17,7 +17,6 @@ from omegaconf.omegaconf import open_dict
 from scipy.optimize import linear_sum_assignment
 from torch_ema import ExponentialMovingAverage
 
-
 import sdes
 import utils
 
@@ -34,7 +33,6 @@ class DiffSepModel(pl.LightningModule):
 
         # the config and all hyperparameters are saved by hydra to the experiment dir
         self.config = config
-        #self.config = Prodict.from_dict(self.config)
         
         os.environ["HYDRA_FULL_ERROR"] = "1"
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
@@ -476,27 +474,30 @@ class DiffSepModel(pl.LightningModule):
         batch, *stats = self.normalize_batch(batch)
 
         mix, target = batch
-
-        # validation score loss
-        if self.init_hack == 7:
-            loss = self.train_step_init_7(mix, target)
-        elif self.init_hack == 6:
-            loss = self.train_step_init_6(mix, target)
-        elif self.init_hack == 5:
-            loss = self.train_step_init_5(mix, target)
-        else:
-            loss = self.compute_score_loss(mix, target)
+        
+        with torch.no_grad():
+            # validation score loss
+            if self.init_hack == 7:
+                loss = self.train_step_init_7(mix, target)
+            elif self.init_hack == 6:
+                loss = self.train_step_init_6(mix, target)
+            elif self.init_hack == 5:
+                loss = self.train_step_init_5(mix, target)
+            else:
+                loss = self.compute_score_loss(mix, target)    
         self.log("val/score_loss", loss, on_epoch=True, sync_dist=True)
 
         # validation separation losses
         if self.trainer.testing or self.n_batches_est_done < self.valid_max_sep_batches:
             self.n_batches_est_done += 1
-            est, *_ = self.separate(mix)
-
-            est = self.denormalize_batch(est, *stats)
-
-            for name, loss in self.val_losses.items():
-                self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
+            with torch.no_grad():
+                est, *_ = self.separate(mix)
+    
+                est = self.denormalize_batch(est, *stats)
+    
+                for name, loss in self.val_losses.items():
+                    metric = loss(est, target)
+                    self.log(name, metric, on_epoch=True, sync_dist=True)
 
     def on_validation_epoch_end(self, outputs = None):
         pass
@@ -723,7 +724,6 @@ class DiffSepModel(pl.LightningModule):
                 samples = torch.cat(samples, dim=0)
                 return samples, ns
             return batched_sampling_fn
-
 
 
 class LatentDiffSepModel(DiffSepModel):

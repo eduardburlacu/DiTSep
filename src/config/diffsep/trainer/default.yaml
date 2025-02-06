@@ -1,5 +1,5 @@
 _target_: pytorch_lightning.Trainer
-accumulate_grad_batches: 4
+accumulate_grad_batches: 8
 min_epochs: 1
 max_epochs: 1000
 deterministic: true

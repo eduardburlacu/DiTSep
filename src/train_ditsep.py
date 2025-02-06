@@ -3,7 +3,14 @@ import json
 import os
 import pytorch_lightning as pl
 
+import yaml
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from hydra.utils import instantiate, to_absolute_path
+from omegaconf import DictConfig
+
 from prefigure.prefigure import get_all_args, push_wandb_config
+from datasets import WSJ0_mix_Module, Valentini_Module
 from stable_audio_tools.data.dataset import create_dataloader_from_config, fast_scandir
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_norm_from_model
@@ -21,11 +28,12 @@ class ModelConfigEmbedderCallback(pl.Callback):
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         checkpoint["model_config"] = self.model_config
 
-def main():
+@hydra.main(config_path="./config/ditsep", config_name="config")
+def main(cfg: DictConfig):
     torch.multiprocessing.set_sharing_strategy('file_system')
     args = get_all_args()
     seed = args.seed
-
+    dataset_name = "2mix"
     # Set a different seed for each process if using SLURM
     if os.environ.get("SLURM_PROCID") is not None:
         seed += int(os.environ.get("SLURM_PROCID"))
@@ -36,17 +44,10 @@ def main():
     with open(args.model_config) as f:
         model_config = json.load(f)
 
-    with open(args.dataset_config) as f:
-        dataset_config = json.load(f)
-
-    train_dl = create_dataloader_from_config(
-        dataset_config,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        sample_rate=model_config["sample_rate"],
-        sample_size=model_config["sample_size"],
-        audio_channels=model_config.get("audio_channels", 2),
-    )
+    if cfg.name == "enhancement":
+        train_dl = Valentini_Module(cfg)
+    else:
+        train_dl = WSJ0_mix_Module(cfg)
 
     val_dl = None
     val_dataset_config = None
@@ -99,7 +100,11 @@ def main():
         logger = None
         checkpoint_dir = args.save_dir if args.save_dir else None
         
-    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
+    ckpt_callback = pl.callbacks.ModelCheckpoint(
+        every_n_train_steps=args.checkpoint_every, 
+        dirpath=checkpoint_dir, 
+        save_top_k=-1
+        )
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     if args.val_dataset_config:
@@ -110,8 +115,7 @@ def main():
     #Combine args and config dicts
     args_dict = vars(args)
     args_dict.update({"model_config": model_config})
-    args_dict.update({"dataset_config": dataset_config})
-    args_dict.update({"val_dataset_config": val_dataset_config})
+    args_dict.update({"cfg": cfg})
 
     if args.logger == 'wandb':
         push_wandb_config(logger, args_dict)
@@ -143,24 +147,40 @@ def main():
         })
 
     trainer = pl.Trainer(
-        devices="auto",
-        accelerator="gpu",
-        num_nodes = args.num_nodes,
-        strategy=strategy,
+        devices=1,
+        accelerator="gpu", #"cpu"
+        detect_anomaly=False, #
+        fast_dev_run=False, #
+        num_nodes = 1,
         precision=args.precision,
         accumulate_grad_batches=args.accum_batches, 
-        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
+        callbacks=[
+            ckpt_callback, 
+            demo_callback, 
+            exc_callback, 
+            save_model_config_callback],
         logger=logger,
         log_every_n_steps=1,
-        max_epochs=10000000,
+        max_epochs=100000,
         default_root_dir=args.save_dir,
         gradient_clip_val=args.gradient_clip_val,
+        check_val_every_n_epoch=1,
         reload_dataloaders_every_n_epochs = 0,
         num_sanity_val_steps=0, # If you need to debug validation, change this line
         **val_args      
     )
 
-    trainer.fit(training_wrapper, train_dl, val_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
+
+    if cfg.train:
+        ckpt_path = getattr(cfg, "resume_from_checkpoint", None)
+        trainer.fit(training_wrapper, train_dl, val_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
+
+    if cfg.test:
+        try:
+            trainer.test(training_wrapper, train_dl, val_dl, ckpt_path="best")
+        except pl.utilities.exceptions.MisconfigurationException:
+            trainer.validate(training_wrapper, train_dl, val_dl)
+            trainer.test(training_wrapper, train_dl, val_dl)
 
 if __name__ == '__main__':
     main()

@@ -38,7 +38,7 @@ class SISDRLoss(torch.nn.Module):
 
 
 class PESQ(torch.nn.Module):
-    def __init__(self, mode="wb", fs=16000):
+    def __init__(self, mode="nb", fs=8000):
         super().__init__()
         self.mode = mode
         self.fs = fs
@@ -49,20 +49,8 @@ class PESQ(torch.nn.Module):
         ref = ref.cpu().numpy()
 
         ave_pesq = list()
-        for ii in range(4):
+        for ii in range(ref.shape[0]):
             ave_pesq.append(pesq(self.fs, ref[ii, 0], est[ii, 0], self.mode))
         p_esq = torch.mean(torch.tensor(ave_pesq))
 
         return p_esq
-
-
-
-"""
-For debugging purposes, to test instantiation of a model with Hydra.
-"""
-
-class TEST_NN_MODEL(torch.nn.Module):
-    def __init__(self, a, b): 
-        super().__init__()
-        self.a = a
-        self.b = b
