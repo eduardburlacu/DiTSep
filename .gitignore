@@ -149,12 +149,12 @@ dmypy.json
 /data/
 /logs/
 /LOGS/
-/config/diffsep/datamodule/
-/config/diffsep_latent/datamodule/
-/config/ditsep/datamodule/
-/config/diffsep/config.yaml
-/config/diffsep_latent/config.yaml
-/config/ditsep/config.yaml
+config/diffsep/datamodule/
+config/diffsep_latent/datamodule/
+config/ditsep/datamodule/
+config/diffsep/config.yaml
+config/diffsep_latent/config.yaml
+config/ditsep/config.yaml
 
 docs/notebooks/
 exp/

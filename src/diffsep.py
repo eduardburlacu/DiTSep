@@ -791,7 +791,18 @@ class LatentDiffSepModel(pl.LightningModule):
 
         # for moving average of weights
         self.ema_decay = getattr(self.config.model, "ema_decay", 0.0)
-        self.ema = ExponentialMovingAverage(self.parameters(), decay=self.ema_decay)
+        
+        if self.config.model.vae.trainable_vae:
+            self.ema = ExponentialMovingAverage(
+                self.score_model.parameters(), 
+                decay=self.ema_decay
+            )
+        else:
+            self.ema = ExponentialMovingAverage(
+                self.parameters(), 
+                decay=self.ema_decay
+            )
+
         self._error_loading_ema = False
 
         self.normalize_batch = utils.normalize_batch
@@ -832,8 +843,63 @@ class LatentDiffSepModel(pl.LightningModule):
             )
 
     def sample_prior(self, mix, target):
-        ...
-        return super().sample_prior(mix, target)
+        # sample time
+        time = self.sample_time(target)
+        # get parameters of marginal distribution of x(t)
+        if self.init_hack != 4:
+            mean, L = self.sde.marginal_prob(target, time, mix)
+        # sample normal vector
+        z = torch.randn_like(target)  # (batch, channels, samples)
+        true_mix = torch.broadcast_to(mix, target.shape) / target.shape[1]
+        if self.init_hack == 1:
+            # Simple hack, we replace the mean by the true mixture for times close to T
+            # The noise is redefined as z + L^{-1} (mean - true_mix)
+            select = time < self.sde.T - self.t_rev_init
+            select = torch.broadcast_to(select[:, None, None], z.shape)
+            z = torch.where(select, z, z + self.sde.mult_std_inv(L, true_mix - mean))
+            # compute x_t
+            x_t = mean + self.sde.mult_std(L, z)
+
+        elif self.init_hack == 2:
+            # Simple hack, we replace the mean by an interpolated value between
+            # mean and the true mixture
+            # The noise is left as is
+            T = self.sde.T
+            Tm = self.sde.T - self.t_rev_init
+            beta = torch.clamp((time - Tm) / (T - Tm), min=0.0, max=1.0)
+            beta = beta[(...,) + (None,) * (mean.ndim - time.ndim)]
+            x_t = true_mix * beta + mean * (1.0 - beta) + self.sde.mult_std(L, z)
+
+        elif self.init_hack == 3:
+            # Simple hack, we replace the mean by an interpolated value between
+            # mean and the true mixture
+            # The noise is redefined as z + L^{-1} (mean - true_mix)
+            T = self.sde.T
+            Tm = self.sde.T - self.t_rev_init
+            beta = torch.clamp((time - Tm) / (T - Tm), min=0.0, max=1.0)
+            beta = beta[(...,) + (None,) * (mean.ndim - time.ndim)]
+
+            x_t = true_mix * beta + mean * (1.0 - beta) + self.sde.mult_std(L, z)
+            # we want to also learn to predict the mismatch between model and error
+            z = self.sde.mult_std_inv(L, x_t - mean)
+
+        elif self.init_hack == 4:
+            # We choose a few samples with prop 1 / sde.N and fix the time to 1.0
+            select = torch.rand_like(time) < 1 / self.sde.N
+            time = torch.where(select, time.new_ones(time.shape) * self.sde.T, time)
+            # we need to recompute mean and L
+            mean, L = self.sde.marginal_prob(target, time, mix)
+            # then we replace the mean by the true mix and redefine the noise to
+            # to z + L^{-1} (mean - true_mix) for the modified samples only
+            select = torch.broadcast_to(select[:, None, None], z.shape)
+            z = torch.where(select, z + self.sde.mult_std_inv(L, true_mix - mean), z)
+            # compute x_t
+            x_t = mean + self.sde.mult_std(L, z)
+
+        else:
+            # compute x_t
+            x_t = mean + self.sde.mult_std(L, z)
+        return x_t, time, L, z
 
     def compute_score_loss_with_pit(self, mix, target):
         n_batch = target.shape[0]
@@ -1158,6 +1224,112 @@ class LatentDiffSepModel(pl.LightningModule):
             for name, loss in self.val_losses.items():
                 self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
 
+    def on_validation_epoch_end(self, outputs = None):
+        pass
+
+    def on_test_epoch_start(self):
+        self.on_validation_epoch_start()
+
+    def test_step(self, batch, batch_idx, dataset_i=None):
+        return self.validation_step(batch, batch_idx, dataset_i=dataset_i)
+
+    def test_epoch_end(self, outputs):
+        """
+        Called at the end of validation to aggregate outputs.
+        :param outputs: list of individual outputs of each validation step.
+        """
+        self.on_validation_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        # we may have some frozen layers, so we remove these parameters
+        # from the optimization
+        log.info(f"set optim with {self.config.model.optimizer}")
+
+        opt_params = filter(lambda p: p.requires_grad, self.parameters())
+        optimizer = instantiate(
+            {**{"params": opt_params}, **self.config.model.optimizer}
+        )
+
+        if getattr(self.config.model, "scheduler", None) is not None:
+            scheduler = instantiate(
+                {**self.config.model.scheduler, **{"optimizer": optimizer}}
+            )
+        else:
+            scheduler = None
+
+        # this will be called in on_after_backward
+        self.grad_clipper = instantiate(self.config.model.grad_clipper)
+
+        if scheduler is None:
+            return [optimizer]
+        else:
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+                "monitor": self.config.model.main_val_loss,
+            }
+
+    def optimizer_step(self, *args, **kwargs):
+        # Method overridden so that the EMA params are updated after each optimizer step
+        super().optimizer_step(*args, **kwargs)
+        self.ema.update(self.parameters())
+
+    def on_after_backward(self):
+        if self.grad_clipper is not None:
+            grad_norm, clipping_threshold = self.grad_clipper(self)
+        else:
+            # we still want to compute this for monitoring in tensorboard
+            grad_norm = utils.grad_norm(self)
+            clipped_norm = grad_norm
+
+        # log every few iterations
+        if self.trainer.global_step % 25 == 0:
+            clipped_norm = min(grad_norm, clipping_threshold)
+
+            # get the current learning reate
+            opt = self.trainer.optimizers[0]
+            current_lr = opt.state_dict()["param_groups"][0]["lr"]
+
+            self.logger.log_metrics(
+                {
+                    "grad/norm": grad_norm,
+                    "grad/clipped_norm": clipped_norm,
+                    "grad/step_size": current_lr * clipped_norm,
+                },
+                step=self.trainer.global_step,
+            )
+
+    # on_load_checkpoint / on_save_checkpoint needed for EMA storing/loading
+    def on_load_checkpoint(self, checkpoint):
+        ema = checkpoint.get("ema", None)
+        if ema is not None:
+            self.ema.load_state_dict(checkpoint["ema"])
+        else:
+            self._error_loading_ema = True
+            log.warn("EMA state_dict not found in checkpoint!")
+
+    def train(self, mode=True, no_ema=False):
+        res = super().train(
+            mode
+        )  # call the standard `train` method with the given mode
+        if not self._error_loading_ema:
+            if mode is False and not no_ema:
+                # eval
+                self.ema.store(self.parameters())  # store current params in EMA
+                self.ema.copy_to(
+                    self.parameters()
+                )  # copy EMA parameters over current params for evaluation
+            else:
+                # train
+                if self.ema.collected_params is not None:
+                    self.ema.restore(
+                        self.parameters()
+                    )  # restore the EMA weights (if stored)
+        return res
+
+    def eval(self, no_ema=False):
+        return self.train(False, no_ema=no_ema)
+
     def on_save_checkpoint(self, checkpoint):
         checkpoint["ema"] = self.ema.state_dict()
 
@@ -1172,7 +1344,6 @@ class LatentDiffSepModel(pl.LightningModule):
             optimizer = self.trainer.optimizers[0]
             for pg in optimizer.param_groups:
                 pg["lr"] = lr_scale * self.lr_original
-
 
     def get_pc_sampler(
         self,
