@@ -17,7 +17,7 @@ from pynvml import nvmlInit, nvmlSystemGetDriverVersion
 
 import utils
 from datasets import WSJ0_mix_Module, Valentini_Module
-from diffsep import DiffSepModel
+from diffsep import LatentDiffSepModel
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -26,7 +26,7 @@ def load_model(config):
 
     if "score_model" in config.model:
         model_type = "score_model"
-        model_obj = DiffSepModel
+        model_obj = LatentDiffSepModel
     else:
         raise ValueError("config/model should have a score_model sub-config")
 
@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/diffsep", config_name="config")
+@hydra.main(config_path="./config/latent_diffsep", config_name="config")
 def main(cfg: DictConfig):
     try:
         nvmlInit()

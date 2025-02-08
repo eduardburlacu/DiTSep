@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from datasets import WSJ0_mix
-from pl_model import DiffSepModel
+from src.diffsep import DiffSepModel
 from sdes.sdes import MixSDE, PriorMixSDE
 
 matplotlib.rc("text", usetex=True)

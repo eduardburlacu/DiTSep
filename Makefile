@@ -43,8 +43,11 @@ eval-debug: ## Evaluate the model
 train: ## Train the model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/continue_vae launch.sh
 
-train_sep: ## Train the separation model
+train_diffsep: ## Train the separation model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_train src/train_diffsep.sh
+
+train_diffsep_latent: ## Train the separation model
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_train src/train_diffsep_latent.sh
 
 finetune: ## Finetune the model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/finetune finetune.sh

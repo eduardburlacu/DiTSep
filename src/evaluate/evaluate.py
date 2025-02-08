@@ -21,7 +21,7 @@ from pystoi import stoi
 
 # from sdes.sdes import MixSDE
 from datasets import NoisyDataset, WSJ0_mix
-from pl_model import DiffSepModel
+from src.diffsep import DiffSepModel
 
 output_dir_base = Path("results")
 

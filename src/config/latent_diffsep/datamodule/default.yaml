@@ -2,7 +2,7 @@ train:
     dl_opts:
         num_workers: 8
         shuffle: true
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path: ${path.datasets.wsj0_mix}
@@ -16,7 +16,7 @@ val:
     dl_opts:
         num_workers: 8
         shuffle: false
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path: ${path.datasets.wsj0_mix}
@@ -30,7 +30,7 @@ test:
     dl_opts:
         num_workers: 8
         shuffle: false
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path: ${path.datasets.wsj0_mix}
@@ -45,7 +45,7 @@ libri-clean:
     dl_opts:
         num_workers: 8
         shuffle: false
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path:  /data/milsrg1/corpora/LibriMix
@@ -61,7 +61,7 @@ libri-noisy:
     dl_opts:
         num_workers: 8
         shuffle: false
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path:  /data/milsrg1/corpora/LibriMix
@@ -77,7 +77,7 @@ librimix_test:
     dl_opts:
         num_workers: 8
         shuffle: false
-        batch_size: 16
+        batch_size: 1
     dataset:
         _target_: datasets.WSJ0_mix
         path: /data/milsrg1/corpora/LibriMix

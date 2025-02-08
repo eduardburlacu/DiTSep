@@ -20,7 +20,7 @@ from tqdm import tqdm
 from omegaconf import OmegaConf
 
 # from sdes.sdes import MixSDE
-from pl_model import DiffSepModel
+from src.diffsep import DiffSepModel
 
 DEFAULT_MODEL = "fakufaku/diffsep"
 

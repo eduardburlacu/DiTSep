@@ -23,6 +23,7 @@ hydra:
     run:
         dir: ${path.exp_root}/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${hydra.job.override_dirname}
     job:
+        chdir: false
         config:
             override_dirname:
                 kv_sep: '-'

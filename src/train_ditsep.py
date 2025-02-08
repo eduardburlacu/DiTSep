@@ -29,9 +29,9 @@ class ModelConfigEmbedderCallback(pl.Callback):
         checkpoint["model_config"] = self.model_config
 
 @hydra.main(config_path="./config/ditsep", config_name="config")
-def main(cfg: DictConfig):
+def main(cfg: DictConfig=None):
     torch.multiprocessing.set_sharing_strategy('file_system')
-    args = get_all_args()
+    args = get_all_args(defaults_file="src/defaults_ditsep.ini") # 
     seed = args.seed
     dataset_name = "2mix"
     # Set a different seed for each process if using SLURM

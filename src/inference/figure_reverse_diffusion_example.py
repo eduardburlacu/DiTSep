@@ -13,7 +13,7 @@ import seaborn as sns
 
 # from sdes.sdes import MixSDE
 from datasets import WSJ0_mix
-from pl_model import DiffSepModel
+from src.diffsep import DiffSepModel
 from sdes import get_pc_sampler
 
 if __name__ == "__main__":

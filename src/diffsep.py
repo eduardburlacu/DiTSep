@@ -726,25 +726,26 @@ class DiffSepModel(pl.LightningModule):
             return batched_sampling_fn
 
 
-class LatentDiffSepModel(DiffSepModel):
+class LatentDiffSepModel(pl.LightningModule):
     def __init__(self, config: DictConfig):
         # init superclass
-        super(self, LatentDiffSepModel).__init__(config)
+        super().__init__()
 
         self.save_hyperparameters()
 
         # the config and all hyperparameters are saved by hydra to the experiment dir
         self.config = config
-        
         os.environ["HYDRA_FULL_ERROR"] = "1"
         #Instantiate the 3 models
+        
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
+        
         vae = utils.load_stable_model(
-            self.config.model.vae.ckpt_path,
             self.config.model.vae.config_path,
+            self.config.model.vae.ckpt_path,
             verbose=False,
             )
-        if self.config.model.trainable_vae:
+        if self.config.model.vae.trainable_vae:
             #we add the training wrapper for VAE optimization
             vae.requires_grad_(True)
             vae.train()
@@ -816,45 +817,296 @@ class LatentDiffSepModel(DiffSepModel):
         est_latent = self.denormalize_batch(est_latent, *stats)
 
         return self.vae.decode(est_latent)
-    
+
+    def sample_time(self, x):
+        n = x.shape[0]
+        device = x.device
+
+        if self.time_sampling_strategy == "uniform":
+            return x.new_zeros(n).uniform_(self.t_eps, self.t_max)
+        elif self.time_sampling_strategy == "varprop":
+            return self.sde.sample_time_varprop(n, t_eps=self.t_eps, device=device)
+        else:
+            raise NotImplementedError(
+                f"No sampling strategy {self.time_sampling_strategy}"
+            )
+
     def sample_prior(self, mix, target):
         ...
         return super().sample_prior(mix, target)
 
     def compute_score_loss_with_pit(self, mix, target):
-        ...
-        return super().compute_score_loss_with_pit(mix, target)
-    
+        n_batch = target.shape[0]
+
+        # sample time
+        time = self.sample_time(target)
+
+        # get parameters of marginal distribution of x(t)
+        means = []
+        for p in itertools.permutations(range(target.shape[1])):
+            mean, L = self.sde.marginal_prob(target[:, p, :], time, mix)
+            means.append(mean)
+        means = torch.stack(means, dim=1)  # (batch, perm, src, samples)
+        n_perm = means.shape[1]
+
+        # sample normal vector
+        z = torch.randn_like(target)  # (batch, channels, samples)
+        Lz = self.sde.mult_std(L, z)
+
+        # select one of the permutations at random
+        mean_select = utils.select_elem_at_random(means, dim=1)
+        xt = mean_select + Lz[:, None, ...]
+
+        # compute the model mismatch to noise ratio
+        err = means - mean_select
+        n_elems = (means.shape[1] - 1) * means.shape[2] * means.shape[3]
+        err_pow = err.square().sum(dim=(1, 2, 3)) / n_elems
+        noise_pow = Lz.square().mean(dim=(1, 2))
+        mmnr = 10.0 * torch.log10(err_pow / noise_pow.clamp(min=1e-5))
+
+        # select which samples require PIT
+        select_pit = mmnr < self.config.model.mmnr_thresh_pit
+        n_pit = select_pit.sum()
+        select_reg = ~select_pit
+        n_reg = select_reg.sum()
+
+        losses = []
+
+        # compute loss with pit
+        if n_pit > 0:
+            mix_ = torch.broadcast_to(
+                mix[select_pit, None, ...], (n_pit, n_perm) + mix.shape[-2:]
+            )
+            mix_ = mix_.flatten(end_dim=1)
+            xt_ = torch.broadcast_to(xt[select_pit], (n_pit, n_perm) + xt.shape[-2:])
+            xt_ = xt_.flatten(end_dim=1)
+            L_ = torch.broadcast_to(
+                L[select_pit, None, ...], (n_pit, n_perm) + L.shape[-2:]
+            )
+            L_ = L_.flatten(end_dim=1)
+            z_ = torch.broadcast_to(
+                z[select_pit, None, ...], (n_pit, n_perm) + z.shape[-2:]
+            )
+            z_ = z_.flatten(end_dim=1)
+            z_extra = self.sde.mult_std_inv(L_, err[select_pit].flatten(end_dim=1))
+            z_pit = z_ + z_extra
+            time_ = torch.broadcast_to(time[select_pit, None], (n_pit, n_perm))
+            time_ = time_.flatten(end_dim=1)
+            pred_pit = self(xt_, time_, mix_)
+            loss_pit = (
+                (self.sde.mult_std(L_, pred_pit) + z_pit).square().mean(dim=(-2, -1))
+            )
+            loss_pit = loss_pit.reshape((n_pit, n_perm)).min(dim=-1).values
+            losses.append(loss_pit)
+
+        # compute loss without pit
+        if n_reg > 0:
+            mix_ = mix[select_reg]
+            xt_ = xt[select_reg, 0, ...]
+            L_ = L[select_reg]
+            z_ = z[select_reg]
+            pred_reg = self(xt_, time[select_reg], mix_)
+            loss_reg = (
+                (self.sde.mult_std(L_, pred_reg) + z_).square().mean(dim=(-2, -1))
+            )
+            losses.append(loss_reg)
+
+        return torch.cat(losses)
+
     def compute_score_loss_with_pit_allthetime(self, mix, target):
-        ...
-        return super().compute_score_loss_with_pit_allthetime(mix, target)
-    
+        """a memory lighter version of the function above (hopefully)"""
+
+        # sample time
+        time = self.sample_time(target)
+
+        target = utils.shuffle_sources(target)
+
+        # compute the reference mean
+        mean_0, L = self.sde.marginal_prob(target, time, mix)
+
+        # sample the target noise vector
+        z0 = torch.randn_like(target)  # (batch, channels, samples)
+
+        # compute x_t
+        Lz0 = self.sde.mult_std(L, z0)
+        x_t = mean_0 + Lz0  # x_t = mean_0 + Lz0
+
+        # get parameters of marginal distribution of x(t)
+        losses = []
+        for p in itertools.permutations(range(target.shape[1])):
+            # compute the mean for the target permutation
+            mean_p, _ = self.sde.marginal_prob(target[:, p, :], time, mix)
+
+            # include the difference between the real mixture and the model in the noise
+            z_p = z0 + self.sde.mult_std_inv(L, mean_0 - mean_p)
+            # this is the noise if the network decides that the mean is mean_p rather than mean_0
+            # i.e. x_t = mean_p + L z_p
+
+            # predict the score
+            pred_score = self(x_t, time, mix)
+
+            # compute the MSE loss
+            L_score = self.sde.mult_std(L, pred_score)
+            loss = self.loss(L_score, -z_p).mean(dim=(-2, -1))
+
+            # compute score and error
+            losses.append(loss)  # (batch)
+
+        loss_pit = torch.stack(losses, dim=0).min(dim=0).values
+
+        return loss_pit
+
     def compute_score_loss_init_hack_pit(self, mix, target):
-        ...
-        return super().compute_score_loss_init_hack_pit(mix, target)
+        """Still thinking what to do here..."""
+        # The time is fixed to T here
+        time = mix.new_ones(mix.shape[0]) * self.sde.T
+
+        # this is the true target mixture
+        true_mix = torch.broadcast_to(mix, target.shape) / target.shape[1]
+
+        # sample the target noise vector
+        z0 = torch.randn_like(target)  # (batch, channels, samples)
+
+        # we need to recompute mean and L
+        losses = []
+        for perm in itertools.permutations(range(target.shape[1])):
+            mean, L = self.sde.marginal_prob(target[:, perm, :], time, mix)
+
+            # include the difference between the real mixture and the model in the noise
+            z = z0 + self.sde.mult_std_inv(L, true_mix - mean)
+            Lz = self.sde.mult_std(L, z)
+
+            # compute x_t
+            x_t = mean + Lz
+
+            # predict the score
+            pred_score = self(x_t, time, mix)
+
+            # compute the MSE loss
+            L_score = self.sde.mult_std(L, pred_score)
+            loss = self.loss(L_score, -z).mean(dim=(-2, -1))
+
+            # compute score and error
+            losses.append(loss)  # (batch)
+
+        loss_val = torch.stack(losses, dim=1).min(dim=1).values
+
+        return loss_val
+
+    def forward(self, xt, time, mix):
+        # implement inference here
+        return self.score_model(xt, time, mix)
+
+    def compute_score_loss(self, mix, target):
+        # compute the samples and associated score
+        x_t, time, L, z = self.sample_prior(mix, target)
+        # predict the score
+        pred_score = self(x_t, time, mix)
+
+        # compute the MSE loss
+        L_score = self.sde.mult_std(L, pred_score)
+        loss = self.loss(L_score, -z)
+
+        if loss.ndim == 3:
+            loss = loss.mean(dim=(-2, -1))
+
+        return loss
+
+    def on_train_epoch_start(self):
+        pass
+    
+    def train_step_init_5(self, mix, target):
+        pit = mix.new_zeros(mix.shape[0]).uniform_() < self.init_hack_p
+        n_pit = pit.sum()
+
+        losses = []
+        if n_pit > 0:
+            # loss with pit
+            loss_pit = self.compute_score_loss_init_hack_pit(mix[pit], target[pit])
+            losses.append(loss_pit)
+
+        if n_pit != mix.shape[0]:
+            # loss without pit
+            target_nopit = utils.shuffle_sources(target[~pit])
+            loss_nopit = self.compute_score_loss(mix[~pit], target_nopit)
+            losses.append(loss_nopit)
+
+        # final loss
+        loss = torch.cat(losses).mean()
+
+        return loss
+
+    def train_step_init_6(self, mix, target):
+        pit = mix.new_zeros(mix.shape[0]).uniform_() < self.init_hack_p
+        n_pit = pit.sum()
+
+        losses = []
+        if n_pit > 0:
+            # loss with pit
+            loss_pit = self.compute_score_loss_init_hack_pit(mix[pit], target[pit])
+            losses.append(loss_pit)
+
+        if n_pit != mix.shape[0]:
+            # loss without pit
+            target_no_init = utils.shuffle_sources(target[~pit])
+            loss_not_init = self.compute_score_loss_with_pit(mix[~pit], target_no_init)
+            losses.append(loss_not_init)
+
+        # final loss
+        loss = torch.cat(losses).mean()
+
+        return loss
+
+    def train_step_init_7(self, mix, target):
+        select_init = mix.new_zeros(mix.shape[0]).uniform_() < self.init_hack_p
+        n_init = select_init.sum()
+
+        losses = []
+        if n_init > 0:
+            # loss with pit
+            loss_pit = self.compute_score_loss_init_hack_pit(
+                mix[select_init], target[select_init]
+            )
+            losses.append(loss_pit)
+
+        if n_init != mix.shape[0]:
+            # loss without pit
+            loss_not_init = self.compute_score_loss_with_pit_allthetime(
+                mix[~select_init], target[~select_init]
+            )
+            losses.append(loss_not_init)
+
+        # final loss
+        loss = torch.cat(losses).mean()
+
+        return loss
 
     def training_step(self, batch, batch_idx):
+        mix, target = batch
+        #pad the mix to match the VAE input size
+        mix = utils.pad(mix, self.vae.encoder.hop_length)
+        target = utils.pad(target, self.vae.encoder.hop_length)
         batch, *stats = self.normalize_batch(batch)
         mix, target = batch
         with torch.no_grad():
-            mix_latent = self.vae.encode(mix)
-            target_latent = self.vae.encode(target)
+            mix = self.vae.encode(mix)
+            target = self.vae.encode(target)
 
         if self.init_hack == 7:
-            loss = self.train_step_init_7(mix_latent, target_latent)
+            loss = self.train_step_init_7(mix, target)
         elif self.init_hack == 6:
-            loss = self.train_step_init_6(mix_latent, target_latent)
+            loss = self.train_step_init_6(mix, target)
         elif self.init_hack == 5:
-            loss = self.train_step_init_5(mix_latent, target_latent)
+            loss = self.train_step_init_5(mix, target)
         elif self.train_source_order == "pit":
-            loss = self.compute_score_loss_with_pit(mix_latent, target_latent)
+            loss = self.compute_score_loss_with_pit(mix, target)
         else:
             if self.train_source_order == "power":
-                target_latent = utils.power_order_sources(target_latent)
+                target = utils.power_order_sources(target)
             elif self.train_source_order == "random":
-                target_latent = utils.shuffle_sources(target_latent)
+                target = utils.shuffle_sources(target)
 
-            loss = self.compute_score_loss(mix_latent, target_latent)
+            loss = self.compute_score_loss(mix, target)
 
         # every 10 steps, we log stuff
         cur_step = self.trainer.global_step
@@ -870,15 +1122,18 @@ class LatentDiffSepModel(DiffSepModel):
         self.do_lr_warmup()
 
         return loss
-
-    
+ 
     def validation_step(self, batch, batch_idx, dataset_i=0):
-        batch, *stats = self.normalize_batch(batch)
-
         mix, target = batch
+        #pad the mix to match the VAE input size
+        mix = utils.pad(mix, self.vae.encoder.hop_length)
+        target = utils.pad(target, self.vae.encoder.hop_length)
+        
         with torch.no_grad():
             mix = self.vae.encode(mix)
             target = self.vae.encode(target)
+        
+        (mix, target), *stats = self.normalize_batch((mix,target))
 
         # validation score loss
         if self.init_hack == 7:
@@ -898,5 +1153,128 @@ class LatentDiffSepModel(DiffSepModel):
 
             est = self.denormalize_batch(est, *stats)
 
+            est = self.vae.decode(est)
+
             for name, loss in self.val_losses.items():
                 self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["ema"] = self.ema.state_dict()
+
+    def to(self, *args, **kwargs):
+        """Override PyTorch .to() to also transfer the EMA of the model weights"""
+        self.ema.to(*args, **kwargs)
+        return super().to(*args, **kwargs)
+
+    def do_lr_warmup(self):
+        if self.lr_warmup is not None and self.trainer.global_step < self.lr_warmup:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.lr_warmup)
+            optimizer = self.trainer.optimizers[0]
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.lr_original
+
+
+    def get_pc_sampler(
+        self,
+        predictor_name,
+        corrector_name,
+        y,
+        N=None,
+        minibatch=None,
+        schedule=None,
+        **kwargs,
+    ):
+        N = self.sde.N if N is None else N
+        sde = self.sde.copy()
+        sde.N = N
+
+        kwargs = {"eps": self.t_eps, **kwargs}
+        if minibatch is None:
+            if schedule is None:
+                return sdes.get_pc_sampler(
+                    predictor_name,
+                    corrector_name,
+                    sde=sde,
+                    score_fn=self,
+                    y=y,
+                    **kwargs,
+                )
+            else:
+                return sdes.get_pc_scheduled_sampler(
+                    predictor_name,
+                    corrector_name,
+                    sde=sde,
+                    score_fn=self,
+                    y=y,
+                    schedule=schedule,
+                    **kwargs,
+                )
+        else:
+            M = y.shape[0]
+
+            def batched_sampling_fn():
+                samples, ns, intmet = [], [], []
+                for i in range(int(math.ceil(M / minibatch))):
+                    y_mini = y[i * minibatch : (i + 1) * minibatch]
+                    if schedule is None:
+                        sampler = sdes.get_pc_sampler(
+                            predictor_name,
+                            corrector_name,
+                            sde=sde,
+                            score_fn=self,
+                            y=y_mini,
+                            **kwargs,
+                        )
+                    else:
+                        sampler = sdes.get_pc_scheduled_sampler(
+                            predictor_name,
+                            corrector_name,
+                            sde=sde,
+                            score_fn=self,
+                            y=y_mini,
+                            schedule=schedule,
+                            **kwargs,
+                        )
+                    sample, n, *other = sampler()
+                    samples.append(sample)
+                    ns.append(n)
+                    if len(other) > 0:
+                        intmet.append(other[0])
+                samples = torch.cat(samples, dim=0)
+                if len(intmet) > 0:
+                    return samples, ns, intmet
+                else:
+                    return samples, ns
+
+            return batched_sampling_fn
+        
+    def get_ode_sampler(self, y, N=None, minibatch=1, **kwargs):
+        """
+        Use PF-ODE sampler at inference time for the given target y.
+        https://github.com/sp-uhh/storm/blob/257e9636a7251ca40aa200753d5c0fe918e31879/sgmse/sampling/__init__.py#L119
+        """
+        N = self.sde.N if N is None else N
+        sde = self.sde.copy()
+        sde.N = N
+        kwargs = {"eps": self.t_eps, **kwargs}
+        
+        if minibatch is None:
+            return sdes.get_ode_sampler(
+                sde, self, y=y, **kwargs
+            )
+        
+        else:
+            M = y.shape[0]
+            def batched_sampling_fn():
+                samples, ns = [], []
+                for i in range(int(math.ceil(M / minibatch))):
+                    y_mini = y[i * minibatch : (i + 1) * minibatch]
+                    sampler = sdes.get_ode_sampler(
+                        sde, self, y=y_mini, **kwargs
+                    )
+                    sample, n = sampler()
+                    samples.append(sample)
+                    ns.append(n)
+                samples = torch.cat(samples, dim=0)
+                return samples, ns
+            return batched_sampling_fn

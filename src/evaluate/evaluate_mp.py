@@ -22,7 +22,7 @@ from pystoi import stoi
 
 import utils
 from datasets import WSJ0_mix
-from pl_model import DiffSepModel
+from src.diffsep import DiffSepModel
 
 
 def get_default_datasets(n_spkr=2, fs=8000, USE_WSJ0 = False, USE_LIBRIMIX=True):
