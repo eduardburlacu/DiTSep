@@ -140,6 +140,7 @@ def main(cfg: DictConfig):
     # create a logger
     if cfg.logger == "wandb":
         pl_logger = pl_loggers.WandbLogger(
+            name=cfg.name,
             project="diffsep", 
             save_dir=".",
             mode="online"

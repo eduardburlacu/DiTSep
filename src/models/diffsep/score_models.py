@@ -136,3 +136,39 @@ class ScoreModelNCSNpp(torch.nn.Module):
         x = self.backbone(x, time_cond)
         x = self.post_process(x, n_samples, n_pad)
         return x
+
+class LatentScoreModelNCSNpp(torch.nn.Module):
+    def __init__(
+        self,
+        num_sources,
+        backbone_args,
+    ):
+        super().__init__()
+
+        # infer input output channels of backbone from number of sources
+        backbone_args.update(
+            num_channels_in=num_sources + 1, num_channels_out=num_sources
+        )
+        self.backbone = instantiate(backbone_args)
+
+    def adjust_length(self, x, n_samples):
+        if x.shape[-1] < n_samples:
+            return torch.nn.functional.pad(x, (0, n_samples - x.shape[-1]))
+        elif x.shape[-1] > n_samples:
+            return x[..., :n_samples]
+        else:
+            return x
+
+    def forward(self, xt, time_cond, mix):
+        """
+        Args:
+            x: (batch, channels, time)
+            time_cond: (batch,)
+        Returns:
+            x: (batch, channels, time) same size as input
+        """
+        x = torch.cat((xt, mix), dim=1)
+        n_samples = x.shape[-1]
+        x = self.backbone(x, time_cond)
+        x = self.adjust_length(x, n_samples)
+        return x

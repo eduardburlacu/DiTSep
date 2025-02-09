@@ -291,7 +291,7 @@ class OobleckEncoder(nn.Module):
         super().__init__()
           
         c_mults = [1] + c_mults
-
+        self.hop_length = int(np.prod(strides))
         self.depth = len(c_mults)
 
         layers = [

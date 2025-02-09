@@ -5,6 +5,7 @@ import logging
 import math
 import os
 from collections import defaultdict
+from contextlib import nullcontext
 from pathlib import Path
 
 import fast_bss_eval
@@ -745,15 +746,16 @@ class LatentDiffSepModel(pl.LightningModule):
             self.config.model.vae.ckpt_path,
             verbose=False,
             )
+        
         if self.config.model.vae.trainable_vae:
             #we add the training wrapper for VAE optimization
             vae.requires_grad_(True)
             vae.train()
-            self.vae = vae
         else:
             vae.requires_grad_(False)
             vae.eval()
-            self.vae = vae
+        
+        self.vae = vae
 
         self.valid_max_sep_batches = getattr(
             self.config.model, "valid_max_sep_batches", 1
@@ -794,12 +796,12 @@ class LatentDiffSepModel(pl.LightningModule):
         
         if self.config.model.vae.trainable_vae:
             self.ema = ExponentialMovingAverage(
-                self.score_model.parameters(), 
+                self.parameters(), 
                 decay=self.ema_decay
             )
         else:
             self.ema = ExponentialMovingAverage(
-                self.parameters(), 
+                self.score_model.parameters(), 
                 decay=self.ema_decay
             )
 
@@ -1147,17 +1149,40 @@ class LatentDiffSepModel(pl.LightningModule):
 
         return loss
 
-    def training_step(self, batch, batch_idx):
-        mix, target = batch
-        #pad the mix to match the VAE input size
+    @torch.no_grad() #TODO: Change to trainable VAE
+    def encode(self, mix, target):
+        log.debug("Encoding...")
+        log.debug(f"Mix shape: {mix.shape}, Target shape: {target.shape}")
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         target = utils.pad(target, self.vae.encoder.hop_length)
-        batch, *stats = self.normalize_batch(batch)
-        mix, target = batch
-        with torch.no_grad():
-            mix = self.vae.encode(mix)
-            target = self.vae.encode(target)
+        log.debug(f"Padded Mix shape: {mix.shape}, Padded Target shape: {target.shape}")
+        mix = self.vae.encode(mix).unsqueeze(1)
+        log.debug(f"Latent Mix shape: {mix.shape}")
+        bsz, n_src, seq_len = target.shape
+        log.debug(f"bsz: {bsz}, n_src: {n_src}, seq_len: {seq_len}")
+        target = target.view(bsz*n_src, 1, seq_len)
+        log.debug(f"Reshaped Target shape: {target.shape}")
+        target = self.vae.encode(target)
+        log.debug(f"Encoded Target shape(before reshaping): {target.shape}")
+        target = target.view(bsz, n_src, *target.shape[1:])
+        log.debug(f"Encoded Target shape(after reshaping): {target.shape}")
+        return mix, target
 
+    @torch.no_grad() #TODO: Change to trainable VAE
+    def decode(self, est):
+        bsz, n_src, latent_dim, seq_len = est.shape
+        est = est.view(bsz*n_src, latent_dim, seq_len)
+        est = self.vae.decode(est)
+        est = est.view(bsz, n_src, -1)
+        return est
+
+    def training_step(self, batch, batch_idx):
+        mix, target = batch
+
+        #pad, encode, normalize the mix and target
+        mix, target = self.encode(mix, target)
+        (mix, target), *_ = self.normalize_batch((mix, target))
+        
         if self.init_hack == 7:
             loss = self.train_step_init_7(mix, target)
         elif self.init_hack == 6:
@@ -1191,16 +1216,11 @@ class LatentDiffSepModel(pl.LightningModule):
  
     def validation_step(self, batch, batch_idx, dataset_i=0):
         mix, target = batch
-        #pad the mix to match the VAE input size
-        mix = utils.pad(mix, self.vae.encoder.hop_length)
-        target = utils.pad(target, self.vae.encoder.hop_length)
         
-        with torch.no_grad():
-            mix = self.vae.encode(mix)
-            target = self.vae.encode(target)
+        #pad, encode, normalize the mix and target        
+        mix, target = self.encode(mix, target)
+        (mix, target), *stats = self.normalize_batch((mix, target))
         
-        (mix, target), *stats = self.normalize_batch((mix,target))
-
         # validation score loss
         if self.init_hack == 7:
             loss = self.train_step_init_7(mix, target)
@@ -1219,7 +1239,7 @@ class LatentDiffSepModel(pl.LightningModule):
 
             est = self.denormalize_batch(est, *stats)
 
-            est = self.vae.decode(est)
+            est = self.decode(est)
 
             for name, loss in self.val_losses.items():
                 self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
@@ -1272,7 +1292,10 @@ class LatentDiffSepModel(pl.LightningModule):
     def optimizer_step(self, *args, **kwargs):
         # Method overridden so that the EMA params are updated after each optimizer step
         super().optimizer_step(*args, **kwargs)
-        self.ema.update(self.parameters())
+        if self.config.model.vae.trainable_vae:
+            self.ema.update(self.parameters())
+        else:
+            self.ema.update(self.score_model.parameters())
 
     def on_after_backward(self):
         if self.grad_clipper is not None:
@@ -1301,12 +1324,19 @@ class LatentDiffSepModel(pl.LightningModule):
 
     # on_load_checkpoint / on_save_checkpoint needed for EMA storing/loading
     def on_load_checkpoint(self, checkpoint):
+        trainable_vae = checkpoint.get("trainable_vae", False)
+        if trainable_vae is None:
+            log.warning(f"trainable_vae not found in checkpoint! Assuming trainable_vae={self.config.model.vae.trainable_vae}")
+        elif  trainable_vae != self.config.model.vae.trainable_vae:
+            log.warning(
+                f"trainable_vae is set to {trainable_vae} in the checkpoint, but the current model is set to {self.config.model.vae.trainable_vae}")
+        
         ema = checkpoint.get("ema", None)
         if ema is not None:
             self.ema.load_state_dict(checkpoint["ema"])
         else:
             self._error_loading_ema = True
-            log.warn("EMA state_dict not found in checkpoint!")
+            log.warning("EMA state_dict not found in checkpoint!")
 
     def train(self, mode=True, no_ema=False):
         res = super().train(
@@ -1315,22 +1345,35 @@ class LatentDiffSepModel(pl.LightningModule):
         if not self._error_loading_ema:
             if mode is False and not no_ema:
                 # eval
-                self.ema.store(self.parameters())  # store current params in EMA
-                self.ema.copy_to(
-                    self.parameters()
-                )  # copy EMA parameters over current params for evaluation
+                if self.config.model.vae.trainable_vae:
+                    self.ema.store(self.parameters())  # store current params in EMA
+                    self.ema.copy_to(
+                        self.parameters()
+                    )  # copy EMA parameters over current params for evaluation
+                else:
+                    self.ema.store(self.score_model.parameters())  # store current params in EMA
+                    self.ema.copy_to(
+                        self.score_model.parameters()
+                    )
             else:
                 # train
-                if self.ema.collected_params is not None:
-                    self.ema.restore(
-                        self.parameters()
-                    )  # restore the EMA weights (if stored)
+                if self.config.model.vae.trainable_vae:
+                    if self.ema.collected_params is not None:
+                        self.ema.restore(
+                            self.parameters()
+                        )  # restore the EMA weights (if stored)
+                else:
+                    if self.ema.collected_params is not None:
+                        self.ema.restore(
+                            self.score_model.parameters()
+                        )
         return res
 
     def eval(self, no_ema=False):
         return self.train(False, no_ema=no_ema)
 
     def on_save_checkpoint(self, checkpoint):
+        checkpoint["trainable_vae"] = self.config.model.vae.trainable_vae
         checkpoint["ema"] = self.ema.state_dict()
 
     def to(self, *args, **kwargs):

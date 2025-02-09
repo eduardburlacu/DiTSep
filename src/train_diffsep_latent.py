@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/latent_diffsep", config_name="config")
+@hydra.main(config_path="./config/latent_diffsep_mix", config_name="config")
 def main(cfg: DictConfig):
     try:
         nvmlInit()
@@ -140,9 +140,10 @@ def main(cfg: DictConfig):
     # create a logger
     if cfg.logger == "wandb":
         pl_logger = pl_loggers.WandbLogger(
+            name=cfg.name,
             project="diffsep", 
             save_dir=".",
-            mode="online"
+            mode="online" #TODO Change to online when ready
         ) # TODO Change to online when ready
     elif cfg.logger == "tensorboard":
         pl_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")
@@ -155,9 +156,9 @@ def main(cfg: DictConfig):
     #trainer = instantiate(cfg.trainer, callbacks=callbacks, logger=tb_logger)
     trainer = pl.Trainer(
         devices=1, #args.num_gpus, [1] for the second GPU, [0, 1] for the first and second GPU etc.
-        accelerator="gpu", #"cpu"
-        detect_anomaly=False, #
-        fast_dev_run=False, #
+        accelerator="cpu", #"cpu"
+        detect_anomaly=True, #
+        fast_dev_run=False, # debugging
         num_nodes = 1,
         accumulate_grad_batches=8, 
         callbacks=callbacks,

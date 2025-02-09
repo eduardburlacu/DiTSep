@@ -75,30 +75,26 @@ class NCSNpp(nn.Module):
         super().__init__()
         self.act = act = get_act(nonlinearity)
 
-        self.nf = nf = nf
-        ch_mult = ch_mult
-        self.num_res_blocks = num_res_blocks = num_res_blocks
-        self.attn_resolutions = attn_resolutions = attn_resolutions
-        dropout = dropout
-        resamp_with_conv = resamp_with_conv
+        self.nf = nf
+        self.ch_mult = ch_mult
+        self.num_res_blocks = num_res_blocks
+        self.attn_resolutions = attn_resolutions
+
         self.num_resolutions = num_resolutions = len(ch_mult)
         self.all_resolutions = all_resolutions = [
             image_size // (2 ** i) for i in range(num_resolutions)
         ]
 
-        
-        self.conditional = conditional = conditional  # noise-conditional
+        self.conditional = conditional  # noise-conditional
         self.centered = centered
         self.scale_by_sigma = scale_by_sigma
 
-        fir = fir
-        fir_kernel = fir_kernel
-        self.skip_rescale = skip_rescale = skip_rescale
+        self.skip_rescale = skip_rescale
         self.resblock_type = resblock_type = resblock_type.lower()
         self.progressive = progressive = progressive.lower()
         self.progressive_input = progressive_input = progressive_input.lower()
         self.embedding_type = embedding_type = embedding_type.lower()
-        init_scale = init_scale
+
         assert progressive in ["none", "output_skip", "residual"]
         assert progressive_input in ["none", "input_skip", "residual"]
         assert embedding_type in ["fourier", "positional"]
