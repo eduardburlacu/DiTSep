@@ -117,7 +117,7 @@ class LatentDiffSep(pl.LightningModule):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         target = utils.pad(target, self.vae.encoder.hop_length)
         mix = self.vae.encode(mix).unsqueeze(1)
-        log.debug(f"Latent Mix shape: {mix.shape}")
+        #log.debug(f"Latent Mix shape: {mix.shape}")
         bsz, n_src, seq_len = target.shape
         target = target.view(bsz*n_src, 1, seq_len)
         target = self.vae.encode(target)
@@ -160,8 +160,9 @@ class LatentDiffSep(pl.LightningModule):
         pred_score, sigma, z = self._step(y, x)
         # compute the MSE loss
         loss = self.loss(pred_score*sigma, -z) #check sign
-        if loss.ndim == 3:
-            loss = loss.mean(dim=(-2, -1))
+        if loss.ndim == 4:
+            loss = loss.mean(dim=(-3, -2, -1))
+        #log.debug(f"Loss shape: {loss.shape}")
         return loss
 
     def compute_score_loss_with_pit(self, mix, target):
@@ -225,6 +226,7 @@ class LatentDiffSep(pl.LightningModule):
             )
             loss_pit = loss_pit.reshape((n_pit, n_perm)).min(dim=-1).values
             losses.append(loss_pit)
+            #log.debug(f"Loss PIT shape: {loss_pit.shape}")
 
         # compute loss without pit
         if n_reg > 0:
@@ -260,9 +262,10 @@ class LatentDiffSep(pl.LightningModule):
             # predict the score
             pred_score = self(x_t, time, mix)
             # compute the MSE loss
-            loss = self.loss(pred_score*sigma, -z).mean(dim=(-2, -1))
+            loss = self.loss(pred_score*sigma, -z).mean(dim=(-3, -2, -1))
             # compute score and error
             losses.append(loss)  # (batch)
+            #log.debug(f"Loss init hack shape: {loss.shape}")
 
         loss_val = torch.stack(losses, dim=1).min(dim=1).values
         return loss_val
@@ -1200,14 +1203,14 @@ class LatentDiffSep_pp(pl.LightningModule):
 
             # The loss type determines the output of the model
             if self.loss_type == "score_matching":
-                score = self._c_skip(t) * x_t + self._c_out(t) * F
+                score = self._c_skip(t) * xt + self._c_out(t) * F
                 return score
             elif self.loss_type == "denoiser":
                 sigmas = self.sde._std(t)[:, None, None, None]
-                score = (F - x_t) / sigmas.pow(2)
+                score = (F - xt) / sigmas.pow(2)
                 return score
             elif self.loss_type == 'data_prediction':
-                x_hat = self._c_skip(t) * x_t + self._c_out(t) * F
+                x_hat = self._c_skip(t) * xt + self._c_out(t) * F
                 return x_hat
 
     def _c_in(self, t):

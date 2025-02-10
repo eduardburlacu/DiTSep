@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/diffsep", config_name="config")
+@hydra.main(config_path="./config/diffsep", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     try:
         nvmlInit()
