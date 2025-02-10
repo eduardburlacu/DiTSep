@@ -583,13 +583,12 @@ class LatentDiffSep(pl.LightningModule):
 
     @torch.no_grad()
     def separate(self, mix, latent=False, **kwargs):
-        #pad the mix to match the VAE input size
+        
         if not latent:
+            #pad the mix to match the VAE input size
             mix = utils.pad(mix, self.vae.encoder.hop_length)
             with torch.no_grad():
                 mix = self.vae.encode(mix)
-
-            (mix, _), *stats = self.normalize_batch((mix, None))
         
         sampler_kwargs = self.config.model.sampler.copy()
         with open_dict(sampler_kwargs):

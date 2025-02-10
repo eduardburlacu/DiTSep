@@ -54,7 +54,7 @@ val_losses:
 
 optimizer:
     _target_: torch.optim.Adam
-    lr: 0.0001
+    lr: 0.00001
     weight_decay: 0.0
 scheduler: null
 grad_clipper:
