@@ -686,7 +686,7 @@ class OUVESDE(SDE):
                 f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape."
             )
         std = self._std(torch.ones((y.shape[0],), device=y.device))
-        x_T = y + torch.randn_like(y) * std[:, None, None, None]
+        x_T = y + torch.randn(shape) * std[:, None, None, None]
         return x_T
 
     def prior_logp(self, z):
@@ -774,8 +774,89 @@ class OUVPSDE(SDE):
                 f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape."
             )
         std = self._std(torch.ones((y.shape[0],), device=y.device))
-        x_T = y + torch.randn_like(y) * std[:, None, None, None]
+        x_T = y + torch.randn(shape) * std[:, None, None, None]
         return x_T
 
     def prior_logp(self, z):
         raise NotImplementedError("prior_logp for OU SDE not yet implemented!")
+
+
+@SDERegistry.register("sbve")
+class SBVESDE(SDE):
+    @staticmethod
+    def add_argparse_args(parser):
+        parser.add_argument("--N", type=int, default=50, help="The number of timesteps in the SDE discretization. 50 by default")
+        parser.add_argument("--k", type=float, default=2.6, help="Parameter of the diffusion coefficient. 2.6 by default.")
+        parser.add_argument("--c", type=float, default=0.4, help="Parameter of the diffusion coefficient. 0.4 by default.")
+        parser.add_argument("--eps", type=float, default=1e-8, help="Small constant to avoid numerical instability. 1e-8 by default.")
+        parser.add_argument("--sampler_type", type=str, default="ode")
+        return parser
+
+    def __init__(self, k, c, N=50, eps=1e-8, sampler_type="ode", **ignored_kwargs):
+        """Construct a Schrodinger Bridge with Variance Exploding SDE.
+
+        As described in Jukić et al., „Schrödinger Bridge for Generative Speech Enhancement“, 2024.
+
+        Args:
+            k: stiffness parameter.
+            c: diffusion parameter.
+            N: number of discretization steps
+        """
+        super().__init__(N)
+        self.k = k
+        self.c = c
+        self.N = N
+        self.eps = eps
+        self.sampler_type = sampler_type
+
+    def copy(self):
+        return SBVESDE(self.k, self.c, N=self.N)
+
+    @property
+    def T(self):
+        return 1
+
+    def sde(self, x, y, t):
+        f = 0.0                                                                 # Table 1
+        g = torch.sqrt(torch.tensor(self.c)) * self.k**(t)                      # Table 1
+        return f, g
+
+    def _sigmas_alphas(self, t):
+        alpha_t = torch.ones_like(t)
+        alpha_T = torch.ones_like(t)
+        sigma_t = torch.sqrt((self.c*(self.k**(2*t)-1.0)) \
+            / (2*torch.log(torch.tensor(self.k))))                              # Table 1
+        sigma_T = torch.sqrt((self.c*(self.k**(2*self.T)-1.0)) \
+            / (2*torch.log(torch.tensor(self.k))))                              # Table 1   
+        
+        alpha_bart = alpha_t / (alpha_T + self.eps)                             # below Eq. (9)
+        sigma_bart = torch.sqrt(sigma_T**2 - sigma_t**2 + self.eps)             # below Eq. (9)
+
+        return sigma_t, sigma_T, sigma_bart, alpha_t, alpha_T, alpha_bart
+
+    def _mean(self, x0, y, t):
+        sigma_t, sigma_T, sigma_bart, alpha_t, alpha_T, alpha_bart = self._sigmas_alphas(t)
+
+        w_xt = alpha_t * sigma_bart**2 / (sigma_T**2 + self.eps)                # below Eq. (11)
+        w_yt = alpha_bart * sigma_t**2 / (sigma_T**2 + self.eps)                # below Eq. (11)
+
+        mu = w_xt[:, None, None, None] * x0 + w_yt[:, None, None, None] * y     # Eq. (11)
+        return mu
+
+    def _std(self, t):
+        sigma_t, sigma_T, sigma_bart, alpha_t, alpha_T, alpha_bart = self._sigmas_alphas(t)
+
+        sigma_xt = (alpha_t * sigma_bart * sigma_t) / (sigma_T + self.eps) 
+        return sigma_xt
+
+    def marginal_prob(self, x0, y, t):  
+        return self._mean(x0, y, t), self._std(t)
+
+    def prior_sampling(self, shape, y):
+        if shape != y.shape:
+            warnings.warn(f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape.")
+        x_T = y
+        return x_T
+
+    def prior_logp(self, z):
+        raise NotImplementedError("prior_logp for SBVE SDE not yet implemented!")  

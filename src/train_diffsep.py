@@ -143,7 +143,7 @@ def main(cfg: DictConfig):
             name=cfg.name,
             project="diffsep", 
             save_dir=".",
-            mode="online"
+            mode="offline"
         ) # TODO Change to online when ready
     elif cfg.logger == "tensorboard":
         pl_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")

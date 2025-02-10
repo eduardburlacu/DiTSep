@@ -47,12 +47,14 @@ train_diffsep: ## Train the separation model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_train src/train_diffsep.sh
 
 train_diffsep_latent: ## Train the separation model
-	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_train src/train_diffsep_latent.sh
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/out_latent_diffsep_train src/train_diffsep_latent.sh
 
 finetune: ## Finetune the model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/finetune finetune.sh
-cont_train:
-	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/cont_train cont_train.sh
+cont_train_vae:
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/cont_train src/cont_train_vae.sh
+cont_train_score:
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/cont_train src/cont_train_score.sh
 validate:
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/validate validate.sh
 eval:

@@ -149,26 +149,40 @@ class LatentScoreModelNCSNpp(torch.nn.Module):
         backbone_args.update(
             num_channels_in=num_sources + 1, num_channels_out=num_sources
         )
+        print(f"BACKBONE ARGS: {backbone_args}")
         self.backbone = instantiate(backbone_args)
 
-    def adjust_length(self, x, n_samples):
-        if x.shape[-1] < n_samples:
-            return torch.nn.functional.pad(x, (0, n_samples - x.shape[-1]))
-        elif x.shape[-1] > n_samples:
-            return x[..., :n_samples]
+    def pad(self, x):
+        n_frames = x.shape[-1]
+        rem = n_frames % 64
+        if rem == 0:
+            return x, 0
         else:
+            pad = 64 - rem
+            x = torch.nn.functional.pad(x, (0, pad))
+            return x, pad
+
+    def unpad(self, x, pad):
+        if pad == 0:
             return x
+        else:
+            return x[..., :-pad]
 
     def forward(self, xt, time_cond, mix):
         """
         Args:
-            x: (batch, channels, time)
+            x: (batch, channels, latent, time_bin)
             time_cond: (batch,)
         Returns:
             x: (batch, channels, time) same size as input
         """
+        print("________________________________________________")
+        print(f"PRE CONCATENATION: xt shape: {xt.shape}; mix shape: {mix.shape}")
         x = torch.cat((xt, mix), dim=1)
-        n_samples = x.shape[-1]
+        print(f"CONCATENATED: x shape: {x.shape}")
+        x, n_pad = self.pad(x)
+        print(f"PADDING: x shape: {x.shape}, n_pad: {n_pad}")
         x = self.backbone(x, time_cond)
-        x = self.adjust_length(x, n_samples)
+        x = self.unpad(x, n_pad)
+        print(f"UNPADDING: x shape: {x.shape}")
         return x

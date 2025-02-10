@@ -149,12 +149,14 @@ dmypy.json
 /data/
 /logs/
 /LOGS/
-config/diffsep/datamodule/
-config/diffsep_latent/datamodule/
-config/ditsep/datamodule/
-config/diffsep/config.yaml
-config/diffsep_latent/config.yaml
-config/ditsep/config.yaml
+
+# Lightning-Hydra-Template Stuff
+src/config/diffsep/config.yaml
+src/config/diffsep/datamodule/
+src/config/diffsep_latent_ouve/datamodule/
+src/config/diffsep_latent_mix/datamodule/
+src/config/diffsep_latent_ouve/config.yaml
+src/config/diffsep_latent_mix/config.yaml
 
 docs/notebooks/
 exp/

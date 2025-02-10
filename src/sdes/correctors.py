@@ -61,10 +61,7 @@ class AnnealedLangevinDynamics(Corrector):
 
     def __init__(self, sde, score_fn, snr, n_steps):
         super().__init__(sde, score_fn, snr, n_steps)
-        if not isinstance(sde, (sdes.MixSDE)):
-            raise NotImplementedError(
-                f"SDE class {sde.__class__.__name__} not yet supported."
-            )
+
         self.sde = sde
         self.score_fn = score_fn
         self.snr = snr
@@ -76,17 +73,12 @@ class AnnealedLangevinDynamics(Corrector):
         x_mean = x
         std = self.sde.marginal_prob(x, t, *args)[1]
 
-        if std.ndim > 1:
-            # this is a sqrt covariance matrix, compute standard deviation of data
-            std = (std @ std)[:, 0, :].sum(dim=-1, keepdim=True).sqrt()
-            std = std[(...,) + (None,) * (x.ndim - std.ndim)]
-
         for _ in range(n_steps):
             grad = self.score_fn(x, t, *args)
             noise = torch.randn_like(x)
             step_size = (target_snr * std) ** 2 * 2
-            x_mean = x + step_size * grad
-            x = x_mean + noise * torch.sqrt(step_size * 2)
+            x_mean = x + step_size[:, None, None, None] * grad
+            x = x_mean + noise * torch.sqrt(step_size * 2)[:, None, None, None]
 
         return x, x_mean
 
