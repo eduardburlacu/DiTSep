@@ -160,7 +160,7 @@ def main(cfg: DictConfig):
         detect_anomaly=False, #
         fast_dev_run=False, # debugging
         num_nodes = 1,
-        accumulate_grad_batches=4, 
+        accumulate_grad_batches=8, 
         callbacks=callbacks,
         logger=pl_logger,
         check_val_every_n_epoch=1,

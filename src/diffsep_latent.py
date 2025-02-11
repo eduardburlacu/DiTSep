@@ -119,17 +119,17 @@ class LatentDiffSep(pl.LightningModule):
         mix = self.vae.encode(mix).unsqueeze(1)
         #log.debug(f"Latent Mix shape: {mix.shape}")
         bsz, n_src, seq_len = target.shape
-        target = target.view(bsz*n_src, 1, seq_len)
+        target = target.reshape(bsz*n_src, 1, seq_len)
         target = self.vae.encode(target)
-        target = target.view(bsz, n_src, *target.shape[1:])
+        target = target.reshape(bsz, n_src, *target.shape[1:])
         return mix, target
 
     @torch.no_grad() #TODO: Change to trainable VAE
     def decode(self, est):
         bsz, n_src, latent_dim, seq_len = est.shape
-        est = est.view(bsz*n_src, latent_dim, seq_len)
+        est = est.reshape(bsz * n_src, latent_dim, seq_len)
         est = self.vae.decode(est)
-        est = est.view(bsz, n_src, -1)
+        est = est.reshape(bsz, n_src, -1)
         return est
 
     def sample_time(self, x):
@@ -332,27 +332,27 @@ class LatentDiffSep(pl.LightningModule):
         
         with torch.no_grad():
             #pad, encode, normalize the mix and target        
-            mix, target = self.encode(mix, target)
-            (mix, target), *stats = self.normalize_batch((mix, target))
+            mix, target_latent = self.encode(mix, target)
+            (mix, target_latent), *stats = self.normalize_batch((mix, target_latent))
         
             # validation score loss
             if self.init_hack == 5:
-                loss = self.train_step_init_5(mix, target)
+                loss = self.train_step_init_5(mix, target_latent)
             else:
-                loss = self.compute_score_loss(mix, target)
-        
+                loss = self.compute_score_loss(mix, target_latent)
+        del target_latent; torch.cuda.empty_cache()
         self.log("val/score_loss", loss, on_epoch=True, sync_dist=True)
 
         # validation separation losses
-        """
         if self.trainer.testing or self.n_batches_est_done < self.valid_max_sep_batches:
             self.n_batches_est_done += 1
             with torch.no_grad():
-                est, *_ = self.separate(mix, latent=True)
+                est, *_ = self.separate(mix, latent=True, target_dim=target.shape[-1])
+                del mix; torch.cuda.empty_cache()
 
+            log.debug(f"Est shape: {est.shape}, Target shape: {target.shape}")
             for name, loss in self.val_losses.items():
                 self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
-        """
 
     def test_step(self, batch, batch_idx, dataset_i=None):
         return self.validation_step(batch, batch_idx, dataset_i=dataset_i)
@@ -582,7 +582,7 @@ class LatentDiffSep(pl.LightningModule):
             return batched_sampling_fn
 
     @torch.no_grad()
-    def separate(self, mix, latent=False, **kwargs):
+    def separate(self, mix, target_dim = None,latent=False, **kwargs):
         
         if not latent:
             #pad the mix to match the VAE input size
@@ -599,9 +599,12 @@ class LatentDiffSep(pl.LightningModule):
             "reverse_diffusion", "ald", mix, **sampler_kwargs
         )
 
-        est_latent, *others = sampler()
-
-        return self.vae.decode(est_latent)
+        est, *others = sampler()
+        log.debug(f"Est latent shape: {est.shape}")
+        est = self.decode(est)
+        if target_dim is not None:
+            return est[..., :target_dim], *others
+        return est, *others
 
 class LatentDiffSep_pp(pl.LightningModule):
     def __init__(self, config: DictConfig):

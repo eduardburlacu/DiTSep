@@ -171,18 +171,14 @@ class LatentScoreModelNCSNpp(torch.nn.Module):
     def forward(self, xt, time_cond, mix):
         """
         Args:
-            x: (batch, channels, latent, time_bin)
+            x: (batch, n_spkrs, latent, time_bin)
             time_cond: (batch,)
+            mix: (batch, 1, latent, time_bin)
         Returns:
-            x: (batch, channels, time) same size as input
+            x: (batch, channels, latent ,time_bin) same size as input
         """
-        print("________________________________________________")
-        print(f"PRE CONCATENATION: xt shape: {xt.shape}; mix shape: {mix.shape}")
         x = torch.cat((xt, mix), dim=1)
-        print(f"CONCATENATED: x shape: {x.shape}")
         x, n_pad = self.pad(x)
-        print(f"PADDING: x shape: {x.shape}, n_pad: {n_pad}")
         x = self.backbone(x, time_cond)
         x = self.unpad(x, n_pad)
-        print(f"UNPADDING: x shape: {x.shape}")
         return x

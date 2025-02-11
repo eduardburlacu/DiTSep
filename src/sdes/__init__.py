@@ -112,8 +112,7 @@ def get_pc_scheduled_sampler(
                 ).flip(dims=(0,))
             else:
                 raise NotImplementedError(f"Schedule '{schedule}' does not exist")
-            # timesteps = 1 - timesteps
-            # timesteps = timesteps.flip(dims=(0,)) + eps
+
             for i in range(sde.N):
                 t = timesteps[i]
                 dt = abs(timesteps[i] - timesteps[i + 1])
@@ -126,8 +125,7 @@ def get_pc_scheduled_sampler(
             ns = sde.N * (corrector.n_steps + 1)
             if intermediate:
                 return x_result, ns, im
-            else:
-                return x_result, ns
+            return x_result, ns
 
     return pc_sampler
 
@@ -145,6 +143,7 @@ def get_pc_sampler(
     corrector_steps=1,
     probability_flow: bool = False,
     intermediate=False,
+    n_spkrs=2,
     **kwargs,
 ):
     """Create a Predictor-Corrector (PC) sampler.
@@ -171,10 +170,11 @@ def get_pc_sampler(
         if intermediate:
             im = []
         with torch.no_grad():
+            shape = torch.Size((y.shape[0], n_spkrs, *y.shape[2:]))
             if true_mean is not None:
-                xt = sde.prior_sampling(true_mean.shape, true_mean).to(true_mean.device)
+                xt = sde.prior_sampling(shape, true_mean).to(true_mean.device)
             else:
-                xt = sde.prior_sampling(y.shape, y).to(y.device)
+                xt = sde.prior_sampling(shape, y).to(y.device)
             timesteps = torch.linspace(sde.T, eps, sde.N, device=y.device)
             for i in range(sde.N):
                 t = timesteps[i]

@@ -50,6 +50,8 @@ class PESQ(torch.nn.Module):
 
         ave_pesq = list()
         for ii in range(ref.shape[0]):
+            print("ref[ii, 0]:", ref[ii, 0].shape)
+            print("est[ii, 0]:", est[ii, 0].shape)
             ave_pesq.append(pesq(self.fs, ref[ii, 0], est[ii, 0], self.mode))
         p_esq = torch.mean(torch.tensor(ave_pesq))
 

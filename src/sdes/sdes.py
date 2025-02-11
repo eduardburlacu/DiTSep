@@ -686,7 +686,7 @@ class OUVESDE(SDE):
                 f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape."
             )
         std = self._std(torch.ones((y.shape[0],), device=y.device))
-        x_T = y + torch.randn(shape) * std[:, None, None, None]
+        x_T = y + torch.randn(shape, device=y.device) * std[:, None, None, None]
         return x_T
 
     def prior_logp(self, z):
