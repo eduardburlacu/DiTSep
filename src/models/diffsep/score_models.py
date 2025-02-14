@@ -142,6 +142,7 @@ class LatentScoreModelNCSNpp(torch.nn.Module):
         self,
         num_sources,
         backbone_args,
+        max_latent_length=128,
     ):
         super().__init__()
 
@@ -151,14 +152,15 @@ class LatentScoreModelNCSNpp(torch.nn.Module):
         )
         print(f"BACKBONE ARGS: {backbone_args}")
         self.backbone = instantiate(backbone_args)
+        self.max_latent_length = max_latent_length
 
     def pad(self, x):
         n_frames = x.shape[-1]
-        rem = n_frames % 64
+        rem = n_frames % self.max_latent_length
         if rem == 0:
             return x, 0
         else:
-            pad = 64 - rem
+            pad = self.max_latent_length - rem
             x = torch.nn.functional.pad(x, (0, pad))
             return x, pad
 

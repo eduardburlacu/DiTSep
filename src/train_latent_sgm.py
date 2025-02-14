@@ -17,7 +17,7 @@ from pynvml import nvmlInit, nvmlSystemGetDriverVersion
 
 import utils
 from datasets import WSJ0_mix_Module, Valentini_Module
-from diffsep import DiffSepModel
+from diffsep_latent import LatentDiffSep
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -26,7 +26,7 @@ def load_model(config):
 
     if "score_model" in config.model:
         model_type = "score_model"
-        model_obj = DiffSepModel
+        model_obj = LatentDiffSep
     else:
         raise ValueError("config/model should have a score_model sub-config")
 
@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/diffsep", config_name="config", version_base=None)
+@hydra.main(config_path="./config/latent_diffsep_ouve", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     try:
         nvmlInit()
@@ -143,7 +143,7 @@ def main(cfg: DictConfig):
             name=cfg.name,
             project="diffsep", 
             save_dir=".",
-            mode="offline"
+            mode="online" #TODO Change to online when ready
         ) # TODO Change to online when ready
     elif cfg.logger == "tensorboard":
         pl_logger = pl_loggers.TensorBoardLogger(save_dir=".", name="", version="")
@@ -158,16 +158,14 @@ def main(cfg: DictConfig):
         devices=1, #args.num_gpus, [1] for the second GPU, [0, 1] for the first and second GPU etc.
         accelerator="gpu", #"cpu"
         detect_anomaly=False, #
-        fast_dev_run=False, #
-        ckpt_path = "exp/default/2025-02-05_23-57-53_/diffsep/uybp2mnq/checkpoints/epoch-029_si_sdr-14.804.ckpt",
+        fast_dev_run=False, # debugging
         num_nodes = 1,
-        accumulate_grad_batches=1, 
+        accumulate_grad_batches=2, 
         callbacks=callbacks,
         logger=pl_logger,
         check_val_every_n_epoch=1,
         max_epochs=1_000,
-        reload_dataloaders_every_n_epochs = 0,
-        gradient_clip_val=2.0,
+        reload_dataloaders_every_n_epochs = 0 #gradient_clip_val=2.0 #precision="16-mixed",
     )
 
     if cfg.train:

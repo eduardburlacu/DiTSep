@@ -8,8 +8,9 @@ t_rev_init: 0.03
 ema_decay: 0.999
 valid_max_sep_batches: 2
 time_sampling_strategy: uniform
-train_source_order: power
+train_source_order: pit
 init_hack: 5
+init_hack_p: 0.1
 mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
 
 score_model:
@@ -17,7 +18,7 @@ score_model:
     num_sources: ${model.n_speakers}
     backbone_args:
         _target_: models.diffsep.ncsnpp.NCSNpp
-        nf: 128 # change to 128?
+        nf: 64 # change to 128?
         image_size: 64
 vae:
     config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
@@ -26,13 +27,13 @@ vae:
 sde:
     _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
-    theta: 1.5
-    sigma_min: 0.05
-    sigma_max: 0.5
-    N: 30
+    theta: 2.0
+    sigma_min: 0.1
+    sigma_max: 5.0
+    N: 45
 
 sampler:
-    N: 30
+    N: 45
     snr: 0.5
     corrector_steps: 1
 
@@ -53,9 +54,12 @@ val_losses:
         fs: ${model.fs}
 
 optimizer:
-    _target_: torch.optim.Adam
-    lr: 0.00001
-    weight_decay: 0.0
+    _target_: torch.optim.AdamW
+    lr: 0.0005
+    betas: [0.8, 0.99]
+    weight_decay: 0.001
+    amsgrad: false
+
 scheduler: null
 grad_clipper:
     _target_: utils.FixedClipper

@@ -50,9 +50,9 @@ class NCSNpp(nn.Module):
         scale_by_sigma=True,
         nonlinearity="swish",
         nf=128,
-        ch_mult=(1, 1, 2, 2, 2, 2, 2),
+        ch_mult=(1, 2, 1, 1, 1),
         num_res_blocks=2,
-        attn_resolutions=(16,),
+        attn_resolutions=(4,),
         resamp_with_conv=True,
         conditional=True,
         fir=True,
@@ -64,7 +64,7 @@ class NCSNpp(nn.Module):
         progressive_combine="sum",
         init_scale=0.0,
         fourier_scale=16,
-        image_size=256,
+        image_size=64,
         num_channels_in=4,
         num_channels_out=4,
         embedding_type="fourier",
@@ -474,6 +474,5 @@ class NCSNpp(nn.Module):
             used_sigmas = used_sigmas.reshape((x.shape[0], *([1] * len(x.shape[1:]))))
             h = h / used_sigmas
 
-        # Convert back to complex number
         h = self.output_layer(h)
         return h

@@ -40,7 +40,7 @@ class LatentDiffSep(pl.LightningModule):
         self.config = config
         os.environ["HYDRA_FULL_ERROR"] = "1"
         #Instantiate the 3 models
-        
+        self.max_len_lat = 0
         self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
         
         vae = utils.load_stable_model(
@@ -116,11 +116,12 @@ class LatentDiffSep(pl.LightningModule):
     def encode(self, mix, target):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         target = utils.pad(target, self.vae.encoder.hop_length)
-        mix = self.vae.encode(mix).unsqueeze(1)
+        mix = self.vae.encode(mix, iterate_batch=False).unsqueeze(1)
+        self.max_len_lat = max(self.max_len_lat, mix.shape[-1])
         #log.debug(f"Latent Mix shape: {mix.shape}")
         bsz, n_src, seq_len = target.shape
         target = target.reshape(bsz*n_src, 1, seq_len)
-        target = self.vae.encode(target)
+        target = self.vae.encode(target, iterate_batch=False)
         target = target.reshape(bsz, n_src, *target.shape[1:])
         return mix, target
 
@@ -149,7 +150,7 @@ class LatentDiffSep(pl.LightningModule):
         return x_t, time, sigma, z
 
     def forward(self, xt, time, mix):
-        return self.score_model(xt, time, mix)
+        return -self.score_model(xt, time, mix)
 
     def _step(self, y, x):
         x_t, t, sigma, z = self.sample_prior(y, x)
@@ -162,7 +163,6 @@ class LatentDiffSep(pl.LightningModule):
         loss = self.loss(pred_score*sigma, -z) #check sign
         if loss.ndim == 4:
             loss = loss.mean(dim=(-3, -2, -1))
-        #log.debug(f"Loss shape: {loss.shape}")
         return loss
 
     def compute_score_loss_with_pit(self, mix, target):
@@ -187,8 +187,8 @@ class LatentDiffSep(pl.LightningModule):
 
         # compute the model mismatch to noise ratio
         err = means - mean_select
-        n_elems = (means.shape[1] - 1) * means.shape[2] * means.shape[3]
-        err_pow = err.square().sum(dim=(1, 2, 3)) / n_elems
+        n_elems = (means.shape[1] - 1) * means.shape[2] * means.shape[3] * means.shape[4]
+        err_pow = err.square().sum(dim=(1, 2, 3, 4)) / n_elems
         noise_pow = sigma_z.square().mean(dim=(1, 2))
         mmnr = 10.0 * torch.log10(err_pow / noise_pow.clamp(min=1e-5))
 
@@ -320,6 +320,7 @@ class LatentDiffSep(pl.LightningModule):
                 {"train/score_loss": loss},
                 step=cur_step,
             )
+        
         self.do_lr_warmup()
 
         return loss
@@ -342,7 +343,7 @@ class LatentDiffSep(pl.LightningModule):
                 loss = self.compute_score_loss(mix, target_latent)
         del target_latent; torch.cuda.empty_cache()
         self.log("val/score_loss", loss, on_epoch=True, sync_dist=True)
-
+        
         # validation separation losses
         if self.trainer.testing or self.n_batches_est_done < self.valid_max_sep_batches:
             self.n_batches_est_done += 1
@@ -350,7 +351,7 @@ class LatentDiffSep(pl.LightningModule):
                 est, *_ = self.separate(mix, latent=True, target_dim=target.shape[-1])
                 del mix; torch.cuda.empty_cache()
 
-            log.debug(f"Est shape: {est.shape}, Target shape: {target.shape}")
+            #log.debug(f"Est shape: {est.shape}, Target shape: {target.shape}")
             for name, loss in self.val_losses.items():
                 self.log(name, loss(est, target), on_epoch=True, sync_dist=True)
 
@@ -600,7 +601,7 @@ class LatentDiffSep(pl.LightningModule):
         )
 
         est, *others = sampler()
-        log.debug(f"Est latent shape: {est.shape}")
+        #log.debug(f"Est latent shape: {est.shape}")
         est = self.decode(est)
         if target_dim is not None:
             return est[..., :target_dim], *others
@@ -959,7 +960,7 @@ class LatentDiffSep_pp(pl.LightningModule):
         target = target.view(bsz*n_src, 1, seq_len)
         target = self.vae.encode(target)
         target = target.view(bsz, n_src, *target.shape[1:])
-        log.debug(f"Encoded Target shape(after reshaping): {target.shape}")
+        #log.debug(f"Encoded Target shape(after reshaping): {target.shape}")
         return mix, target
 
     @torch.no_grad() #TODO: Change to trainable VAE

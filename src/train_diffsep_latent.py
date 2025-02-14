@@ -160,13 +160,12 @@ def main(cfg: DictConfig):
         detect_anomaly=False, #
         fast_dev_run=False, # debugging
         num_nodes = 1,
-        accumulate_grad_batches=8, 
+        accumulate_grad_batches=4, 
         callbacks=callbacks,
         logger=pl_logger,
         check_val_every_n_epoch=1,
         max_epochs=1_000,
-        reload_dataloaders_every_n_epochs = 0,
-        gradient_clip_val=2.0 #precision="16-mixed",
+        reload_dataloaders_every_n_epochs = 0 #gradient_clip_val=2.0 #precision="16-mixed",
     )
 
     if cfg.train:
