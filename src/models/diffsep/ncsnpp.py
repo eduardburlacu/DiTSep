@@ -52,7 +52,7 @@ class NCSNpp(nn.Module):
         nf=128,
         ch_mult=(1, 2, 1, 1, 1),
         num_res_blocks=2,
-        attn_resolutions=(4,),
+        attn_resolutions=(4,8,16),
         resamp_with_conv=True,
         conditional=True,
         fir=True,

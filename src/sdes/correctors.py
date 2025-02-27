@@ -72,13 +72,14 @@ class AnnealedLangevinDynamics(Corrector):
         target_snr = self.snr
         x_mean = x
         std = self.sde.marginal_prob(x, t, *args)[1]
+        pad_dim = (...,) + (None,) * (x.ndim - std.ndim)
 
         for _ in range(n_steps):
             grad = self.score_fn(x, t, *args)
             noise = torch.randn_like(x)
             step_size = (target_snr * std) ** 2 * 2
-            x_mean = x + step_size[:, None, None, None] * grad
-            x = x_mean + noise * torch.sqrt(step_size * 2)[:, None, None, None]
+            x_mean = x + step_size[pad_dim] * grad #[:, None, None, None]
+            x = x_mean + noise * torch.sqrt(step_size * 2)[pad_dim] # [:, None, None, None]
 
         return x, x_mean
 

@@ -109,16 +109,12 @@ class LatentDiffSep(pl.LightningModule):
 
         self._error_loading_ema = False
 
-        self.normalize_batch = utils.normalize_batch
-        self.denormalize_batch = utils.denormalize_batch
-
     @torch.no_grad() #TODO: Change to trainable VAE
     def encode(self, mix, target):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         target = utils.pad(target, self.vae.encoder.hop_length)
         mix = self.vae.encode(mix, iterate_batch=False).unsqueeze(1)
         self.max_len_lat = max(self.max_len_lat, mix.shape[-1])
-        #log.debug(f"Latent Mix shape: {mix.shape}")
         bsz, n_src, seq_len = target.shape
         target = target.reshape(bsz*n_src, 1, seq_len)
         target = self.vae.encode(target, iterate_batch=False)
@@ -150,7 +146,7 @@ class LatentDiffSep(pl.LightningModule):
         return x_t, time, sigma, z
 
     def forward(self, xt, time, mix):
-        return -self.score_model(xt, time, mix)
+        return self.score_model(xt, time, mix)
 
     def _step(self, y, x):
         x_t, t, sigma, z = self.sample_prior(y, x)
@@ -334,7 +330,6 @@ class LatentDiffSep(pl.LightningModule):
         with torch.no_grad():
             #pad, encode, normalize the mix and target        
             mix, target_latent = self.encode(mix, target)
-            (mix, target_latent), *stats = self.normalize_batch((mix, target_latent))
         
             # validation score loss
             if self.init_hack == 5:
@@ -582,14 +577,13 @@ class LatentDiffSep(pl.LightningModule):
                 return samples, ns
             return batched_sampling_fn
 
-    @torch.no_grad()
     def separate(self, mix, target_dim = None,latent=False, **kwargs):
         
         if not latent:
             #pad the mix to match the VAE input size
             mix = utils.pad(mix, self.vae.encoder.hop_length)
             with torch.no_grad():
-                mix = self.vae.encode(mix)
+                mix = self.vae.encode(mix).unsqueeze(1) #TODO Check on that unsqueeze
         
         sampler_kwargs = self.config.model.sampler.copy()
         with open_dict(sampler_kwargs):
@@ -1014,7 +1008,7 @@ class LatentDiffSep_pp(pl.LightningModule):
         
         #pad, encode, normalize the mix and target        
         mix, target = self.encode(mix, target)
-        (mix, target), *stats = self.normalize_batch((mix, target))
+        #(mix, target), *stats = self.normalize_batch((mix, target))
         
         # validation score loss
         if self.init_hack == 7:
@@ -1032,7 +1026,7 @@ class LatentDiffSep_pp(pl.LightningModule):
             self.n_batches_est_done += 1
             est, *_ = self.separate(mix)
 
-            est = self.denormalize_batch(est, *stats)
+            #est = self.denormalize_batch(est, *stats)
 
             est = self.decode(est)
 

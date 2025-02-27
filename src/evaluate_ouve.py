@@ -16,17 +16,73 @@ import torch
 import torchaudio
 import yaml
 import logging
-from omegaconf import OmegaConf
+import hydra
+from omegaconf import OmegaConf, DictConfig
 from pesq import pesq
 from pystoi import stoi
 
 import utils
 from datasets import WSJ0_mix
-from src.diffsep import DiffSepModel
+from diffsep import DiffSepOU
+
+os.environ["HYDRA_FULL_ERROR"] = "1"
+
+
+def load_model(config, ckpt_path=None):
+
+    if "score_model" in config.model:
+        model_type = "score_model"
+        model_obj = DiffSepOU
+    else:
+        raise ValueError("config/model should have a score_model sub-config")
+
+    #ckpt_path = Path(to_absolute_path(load_pretrained))
+    hparams_path = (
+        ckpt_path.parents[1] / "hparams.yaml"
+    )  # path when using lightning checkpoint
+    hparams_path_alt = (
+        ckpt_path.parents[0] / "hparams.yaml"
+    )  # path when using calibration output checkpoint
+
+    if hparams_path_alt.exists():
+        log.info(f"  - {hparams_path_alt=}")
+        # this was produced by the calibration routing
+        with open(hparams_path, "r") as f:
+            conf = yaml.safe_load(f)
+            config_seld_model = conf["config"]["model"][model_type]
+
+        config.model.seld_model.update(config_seld_model)
+        model = model_obj(config)
+
+        state_dict = torch.load(str(ckpt_path))
+
+        log.info("Load model state_dict")
+        model.load_state_dict(state_dict, strict=True)
+
+    elif hparams_path.exists():
+        log.info(f"  - {hparams_path=}")
+        # this is a checkpoint
+        with open(hparams_path, "r") as f:
+            conf = yaml.safe_load(f)
+            config_seld_model = conf["config"]["model"][model_type]
+
+        config.model.seld_model.update(config_seld_model)
+
+        log.info("Load model from lightning checkpoint")
+        model = model_obj.load_from_checkpoint(
+            ckpt_path, strict=True, config=config
+        )
+
+    else:
+        raise ValueError(
+            f"Could not find the hparams.yaml file for checkpoint {ckpt_path}"
+        )
+
+    return model
 
 
 def get_default_datasets(n_spkr=2, fs=8000, USE_WSJ0 = False, USE_LIBRIMIX=True):
-    ds = OmegaConf.load("config/datamodule/default.yaml")
+    ds = OmegaConf.load("src/config/diffsep/datamodule/default.yaml")
     if USE_WSJ0:
         for split in ["val", "test", "train"]:
             ds[split].dataset.path = "/data/milsrg1/corpora/wsj0_mix"
@@ -153,7 +209,7 @@ def summarize(results, ignore_inf=True):
     return dict(summary)
 
 
-def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
+def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model_config:DictConfig):
 
     fig_dir = output_dir / "fig"
     wav_dir = output_dir / "wav"
@@ -174,7 +230,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
 
     else:
         # load the config file
-        with open(args.ckpt.parent / "hparams.yaml", "r") as f:
+        with open("/research/milsrg1/user_workspace/efb48/DiTSep/checkpoints/diffsep/hparams.yaml", "r") as f:
             hparams = yaml.safe_load(f)
         config = hparams["config"]
 
@@ -196,12 +252,16 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
         # load validation dataset
         dataset = WSJ0_mix(**ds_args)
 
-        # load model
-        model = DiffSepModel.load_from_checkpoint(str(args.ckpt), config = config)
+        #transform the config to a DictConfig
+        #model = DiffSepModel.load_from_checkpoint(str(args.ckpt), config = model_config)
+        model =  DiffSepOU(model_config)
+        ckpt = torch.load(str(args.ckpt))["state_dict"]
+        model.load_state_dict(ckpt, strict=True)
+        #'model, _ = load_model(model_config,str(args.ckpt))'
 
         # transfer to GPU
         model = model.to(device)
-        model.eval()
+        model.eval(no_ema=True)
 
         # prepare inference parameters
         sampler_kwargs = model.config.model.sampler
@@ -252,7 +312,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device):
 
             sampler = model.get_pc_sampler(
                 "reverse_diffusion",
-                "ald2",
+                "ald",
                 mix,
                 N=N,
                 denoise=denoise,
@@ -335,90 +395,29 @@ def str_or_int(x):
         pass
     return x
 
-
-if __name__ == "__main__":
-
+@hydra.main(config_path="./config/diffsep_ouve", config_name="config", version_base=None)
+def main(model_config:DictConfig):
     torch.multiprocessing.set_start_method("spawn")
 
-    parser = argparse.ArgumentParser(
-        description="Run evaluation on validation or test dataset"
-    )
-    parser.add_argument("ckpt", type=Path, help="Path to checkpoint to use")
-    parser.add_argument(
-        "-o", "--output_dir", type=Path, default="results", help="The output folder"
-    )
-    parser.add_argument(
-        "-d",
-        "--device",
-        type=str_or_int,
-        nargs="+",
-        default=[0],
-        help="Device to use (default: cuda:0)",
-    )
-    parser.add_argument(
-        "-w", "--workers", default=0, type=int, help="Number of parallel processes"
-    )
-    parser.add_argument(
-        "--dl-workers",
-        default=0,
-        type=int,
-        help="Number of workers for the dataloader (default 0)",
-    )
-    parser.add_argument(
-        "--tag",
-        type=str,
-        help=(
-            "A tag name for the experiment. If not provided,"
-            " the experiment and checkpoints name are used."
-        ),
-    )
-    parser.add_argument(
-        "-l", "--limit", type=int, help="Limit the number of samples to process"
-    )
-    parser.add_argument(
-        "--save-n",
-        type=int,
-        help="Save a limited number of output samples (default: save all)",
-    )
-    parser.add_argument(
-        "--splits",
-        required=True,
-        choices=["test", "val", "librimix_train-100", "librimix_train-360", "librimix_test"],
-        nargs="+",
-        help="Splits of the dataset to process.",
-    )
-    parser.add_argument("-N", type=int, default=None, help="Number of steps")
-    parser.add_argument(
-        "--snr", type=float, default=None, help="Step size of corrector"
-    )
-    parser.add_argument(
-        "--corrector-steps", type=int, default=None, help="Number of corrector steps"
-    )
-    parser.add_argument(
-        "--denoise", type=bool, default=True, help="Use denoising in solver"
-    )
-    parser.add_argument(
-        "--pesq-mode",
-        type=str,
-        choices=["nb", "wb"],
-        default="nb",
-        help="Mode for PESQ 'wb' or 'nb'",
-    )
-    parser.add_argument(
-        "--stoi-no-extended", action="store_true", help="Disable extended mode for STOI"
-    )
-    parser.add_argument(
-        "-s", "--schedule", type=str, help="Pick a different schedule for the inference"
-    )
-    parser.add_argument(
-        "--n-proc", type=int, help="Number of parallel processes to use"
-    )
-
-    args = parser.parse_args()
-
-    splits = args.splits
-    if len(splits) == 0:
-        parser.error("No split requested, add --splits <split_name> ...")
+    args = dict()
+    args["ckpt"] = Path("diffsep_ou/sgkiv80c/checkpoints/epoch-024_si_sdr-14.408.ckpt")
+    args["output_dir"] = Path("results_ouve")
+    args["device"] = [0]
+    args["workers"] = 0
+    args["dl_workers"] = 0
+    args["tag"] = None
+    args["limit"] = None
+    args["save_n"] = None
+    args["N"] = None
+    args["snr"] = None
+    args["corrector_steps"] = None
+    args["denoise"] = True
+    args["pesq_mode"] = "nb"
+    args["stoi_no_extended"] = False
+    args["schedule"] = None
+    args["n_proc"] = None
+    args = OmegaConf.create(args)
+    splits = ["librimix_test"]
 
     output_dir_base = args.output_dir
 
@@ -433,7 +432,7 @@ if __name__ == "__main__":
 
     else:
         # load the config file
-        hparams = OmegaConf.load(args.ckpt.parent / "hparams.yaml")
+        hparams = OmegaConf.load("/research/milsrg1/user_workspace/efb48/DiTSep/checkpoints/diffsep/hparams.yaml")
         config = hparams.config
 
         # prepare inference parameters
@@ -507,11 +506,11 @@ if __name__ == "__main__":
     if args.workers == 0:
         results = []
         for task_args in tasks:
-            results.append(evaluate_process(*task_args))
+            results.append(evaluate_process(*task_args, model_config=model_config))
     else:
         with utils.SyncProcessingPool(args.workers) as pool:
             for task_args in tasks:
-                pool.push(evaluate_process, task_args)
+                pool.push(evaluate_process, task_args, model_config=model_config)
             results, *_ = pool.wait_results(progress_bar=True)
 
     # aggregate results
@@ -528,3 +527,6 @@ if __name__ == "__main__":
             json.dump(summary, f, indent=2)
         print(f"Summary for {split}")
         print(summary)
+
+if __name__ == "__main__":
+    main()

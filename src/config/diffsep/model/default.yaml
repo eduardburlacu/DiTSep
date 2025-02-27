@@ -23,6 +23,12 @@ score_model:
     backbone_args:
         _target_: models.diffsep.ncsnpp.NCSNpp
         nf: 64 #128 from HF
+        ch_mult: [1, 1, 2, 2, 2, 2, 2]
+        num_res_blocks: 2
+        attn_resolutions: [16]
+        resamp_with_conv: True
+        image_size: 256
+
     transform: exponent
     spec_abs_exponent: 0.5
     spec_factor: 0.15 #0.33

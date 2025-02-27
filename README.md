@@ -1,5 +1,5 @@
 ---
-title: DiTSep
+title: LatentDiffSep
 labels: [Source Separation, Diffusion Models ] # please add between 4 and 10 single-word (maybe two-words) labels (e.g. "system heterogeneity", "image classification", "asynchronous", "weight sharing", "cross-silo")
 dataset: [WSJ0-2mix, WSJ0-3mix, Libri2mix, Libri3mix] # list of datasets you include in your baseline
 ---
@@ -9,8 +9,8 @@ Master Thesis Project at University of Cambridge.
 
 <!--**Site link:** \-->
 <!--**Paper link:** \-->
-**Author:** Eduard Burlacu \
-**Supervisors:** Brian Sun, Phil Woodland
+**Contributor: ** Eduard Burlacu \
+
 
 **Abstract:** 
 

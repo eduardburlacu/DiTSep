@@ -17,7 +17,7 @@ from pynvml import nvmlInit, nvmlSystemGetDriverVersion
 
 import utils
 from datasets import WSJ0_mix_Module, Valentini_Module
-from diffsep import DiffSepModel, DiffSepOU #LatentDiffSepMix # DiffSepModel
+from diffsep import DiffSepOU #LatentDiffSepMix # DiffSepModel
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -26,7 +26,7 @@ def load_model(config):
 
     if "score_model" in config.model:
         model_type = "score_model"
-        model_obj = DiffSepModel #DiffSepOU #LatentDiffSepMix#DiffSepModel
+        model_obj = DiffSepOU #LatentDiffSepMix#DiffSepModel
     else:
         raise ValueError("config/model should have a score_model sub-config")
 
@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/diffsep_ouve", config_name="config", version_base=None)
+@hydra.main(config_path="./config/diffsep", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     try:
         nvmlInit()
@@ -113,16 +113,6 @@ def main(cfg: DictConfig):
     # save_top_k == -1  <-- saves all models
     val_loss_name = f"{cfg.model.main_val_loss}"
     loss_name = val_loss_name.split("/")[-1]  # avoid "/" in filenames
-    modelcheckpoint_callback = pl.callbacks.ModelCheckpoint(
-        monitor=val_loss_name,
-        save_top_k=20,
-        mode=cfg.model.main_val_loss_mode,
-        filename="".join(
-            ["epoch-{epoch:03d}_", loss_name, "-{", val_loss_name, ":.3f}"]
-        ),
-        auto_insert_metric_name=False,
-    )
-    callbacks.append(modelcheckpoint_callback)
 
     # the data module
     print("Using the DCASE2020 SELD original dataset")
@@ -141,7 +131,7 @@ def main(cfg: DictConfig):
     if cfg.logger == "wandb":
         pl_logger = pl_loggers.WandbLogger(
             name=cfg.name,
-            project="diffsep_ou", 
+            project="test", 
             save_dir=".",
             mode="online"
         ) # TODO Change to online when ready
@@ -159,36 +149,16 @@ def main(cfg: DictConfig):
         accelerator="gpu", #"cpu"
         detect_anomaly=False, #
         fast_dev_run=False, #
-        #ckpt_path = "exp/default/2025-02-05_23-57-53_/diffsep/uybp2mnq/checkpoints/epoch-029_si_sdr-14.804.ckpt",
+        ckpt_path = "exp/default/2025-02-05_23-57-53_/diffsep/uybp2mnq/checkpoints/epoch-029_si_sdr-14.804.ckpt",
         num_nodes = 1,
         accumulate_grad_batches=8, 
         callbacks=callbacks,
         logger=pl_logger,
-        check_val_every_n_epoch=1,
-        max_epochs=1_000,
         reload_dataloaders_every_n_epochs = 0,
     )
 
-    if cfg.train:
-        log.info("start training")
-        ckpt_path = getattr(cfg, "resume_from_checkpoint", None)
-        if ckpt_path is None:
-    
-            trainer.fit(model, dm)
-
-        else:
-            trainer.fit(model, dm, ckpt_path=to_absolute_path(ckpt_path))
-
-    if cfg.test:
-        try:
-            log.info("start testing")
-            trainer.test(model, dm, ckpt_path="best")
-        except pl.utilities.exceptions.MisconfigurationException:
-            log.info(
-                "test with current model value because no best model path is available"
-            )
-            trainer.validate(model, dm)
-            trainer.test(model, dm)
+    #trainer.validate(model, dm)
+    trainer.test(model, dm)
 
 
 if __name__ == "__main__":

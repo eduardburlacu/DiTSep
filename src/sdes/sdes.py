@@ -140,6 +140,7 @@ class SDE(abc.ABC):
             def rsde_parts(self, x, t, *args):
                 sde_drift, sde_diffusion = sde_fn(x, t, *args)
                 pad_dim = (...,) + (None,) * (x.ndim - sde_diffusion.ndim)
+                warnings.warn(f"x.shape: {x.shape}; sde_diffusion.shape: {sde_diffusion.shape}; t.shape: {t.shape}; args: {args[0].shape}")
                 score = score_model(x, t, *args)
                 score_drift = (
                     -sde_diffusion[pad_dim] ** 2
@@ -660,7 +661,10 @@ class OUVESDE(SDE):
 
     def _mean(self, x0, t, y):
         theta = self.theta
-        exp_interp = torch.exp(-theta * t)[:, None, None, None]
+        
+        exp_interp = torch.exp(-theta * t) #[:, None, None, None] 
+        pad = (...,) + (None,) * (x0.ndim - exp_interp.ndim)
+        exp_interp = exp_interp[pad]
         return exp_interp * x0 + (1 - exp_interp) * y
 
     def _std(self, t):
@@ -683,98 +687,11 @@ class OUVESDE(SDE):
     def prior_sampling(self, shape, y):
         if shape != y.shape:
             warnings.warn(
-                f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape."
+                f"Target shape {shape} does not match shape of y {y.shape}! Brodcasting mix shape."
             )
         std = self._std(torch.ones((y.shape[0],), device=y.device))
-        x_T = y + torch.randn(shape, device=y.device) * std[:, None, None, None]
-        return x_T
-
-    def prior_logp(self, z):
-        raise NotImplementedError("prior_logp for OU SDE not yet implemented!")
-
-
-@SDERegistry.register("ouvp")
-class OUVPSDE(SDE):
-    # !!! We do not utilize this SDE in our works due to observed instabilities around t=0.2. !!!
-    @staticmethod
-    def add_argparse_args(parser):
-        parser.add_argument(
-            "--sde-n",
-            type=int,
-            default=1000,
-            help="The number of timesteps in the SDE discretization. 1000 by default",
-        )
-        parser.add_argument(
-            "--beta-min", type=float, required=True, help="The minimum beta to use."
-        )
-        parser.add_argument(
-            "--beta-max", type=float, required=True, help="The maximum beta to use."
-        )
-        parser.add_argument(
-            "--stiffness",
-            type=float,
-            default=1,
-            help="The stiffness factor for the drift, to be multiplied by 0.5*beta(t). 1 by default.",
-        )
-        return parser
-
-    def __init__(self, beta_min, beta_max, stiffness=1, N=1000, **ignored_kwargs):
-        """
-        !!! We do not utilize this SDE in our works due to observed instabilities around t=0.2. !!!
-        Construct an Ornstein-Uhlenbeck Variance Preserving SDE:
-        dx = -1/2 * beta(t) * stiffness * (y-x) dt + sqrt(beta(t)) * dw
-        with
-        beta(t) = beta_min + t(beta_max - beta_min)
-        Note that the "steady-state mean" `y` is not provided at construction, but must rather be given as an argument
-        to the methods which require it (e.g., `sde` or `marginal_prob`).
-        Args:
-            beta_min: smallest sigma.
-            beta_max: largest sigma.
-            stiffness: stiffness factor of the drift. 1 by default.
-            N: number of discretization steps
-        """
-        super().__init__(N)
-        self.beta_min = beta_min
-        self.beta_max = beta_max
-        self.stiffness = stiffness
-        self.N = N
-
-    def copy(self):
-        return OUVPSDE(self.beta_min, self.beta_max, self.stiffness, N=self.N)
-
-    @property
-    def T(self):
-        return 1
-
-    def _beta(self, t):
-        return self.beta_min + t * (self.beta_max - self.beta_min)
-
-    def sde(self, x, t, y):
-        drift = 0.5 * self.stiffness * batch_broadcast(self._beta(t), y) * (y - x)
-        diffusion = torch.sqrt(self._beta(t))
-        return drift, diffusion
-
-    def _mean(self, x0, t, y):
-        b0, b1, s = self.beta_min, self.beta_max, self.stiffness
-        x0y_fac = torch.exp(-0.25 * s * t * (t * (b1 - b0) + 2 * b0))[
-            :, None, None, None
-        ]
-        return y + x0y_fac * (x0 - y)
-
-    def _std(self, t):
-        b0, b1, s = self.beta_min, self.beta_max, self.stiffness
-        return (1 - torch.exp(-0.5 * s * t * (t * (b1 - b0) + 2 * b0))) / s
-
-    def marginal_prob(self, x0, t, y):
-        return self._mean(x0, t, y), self._std(t)
-
-    def prior_sampling(self, shape, y):
-        if shape != y.shape:
-            warnings.warn(
-                f"Target shape {shape} does not match shape of y {y.shape}! Ignoring target shape."
-            )
-        std = self._std(torch.ones((y.shape[0],), device=y.device))
-        x_T = y + torch.randn(shape) * std[:, None, None, None]
+        pad = (...,) + (None,) * (y.ndim - std.ndim)
+        x_T = y + torch.randn(shape, device=y.device) * std[pad]#[:, None, None, None]
         return x_T
 
     def prior_logp(self, z):

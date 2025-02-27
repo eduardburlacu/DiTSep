@@ -24,11 +24,12 @@ vae:
     config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
     ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
     trainable_vae: false
+
 sde:
     _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
-    theta: 2.0
-    sigma_min: 0.1
+    theta: 1.5
+    sigma_min: 0.01
     sigma_max: 5.0
     N: 45
 
@@ -55,7 +56,7 @@ val_losses:
 
 optimizer:
     _target_: torch.optim.AdamW
-    lr: 0.0005
+    lr: 0.00015
     betas: [0.8, 0.99]
     weight_decay: 0.001
     amsgrad: false

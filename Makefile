@@ -58,7 +58,7 @@ cont_train_score:
 validate:
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/validate validate.sh
 eval:
-	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_eval_1000 scripts/eval_libri.sh
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/baseline_test src/eval_libri.sh
 
 sleep: ## Sleep for 1 hour
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_eval_1000 scripts/sleep.sh
