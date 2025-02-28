@@ -142,7 +142,7 @@ class LatentScoreModelNCSNpp(torch.nn.Module):
         self,
         num_sources,
         backbone_args,
-        max_latent_length=128,
+        max_latent_length=16,
     ):
         super().__init__()
 

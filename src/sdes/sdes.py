@@ -756,8 +756,8 @@ class SBVESDE(SDE):
 
         w_xt = alpha_t * sigma_bart**2 / (sigma_T**2 + self.eps)                # below Eq. (11)
         w_yt = alpha_bart * sigma_t**2 / (sigma_T**2 + self.eps)                # below Eq. (11)
-
-        mu = w_xt[:, None, None, None] * x0 + w_yt[:, None, None, None] * y     # Eq. (11)
+        pad_dim = (...,) + (None,) * (x0.ndim - t.ndim)
+        mu = w_xt[pad_dim] * x0 + w_yt[pad_dim] * y     # Eq. (11)
         return mu
 
     def _std(self, t):

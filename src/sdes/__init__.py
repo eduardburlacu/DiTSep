@@ -281,12 +281,13 @@ def get_ode_sampler(
     return ode_sampler
 
 
-def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kwargs):
+def get_sb_sampler(sde, model, y:torch.Tensor, eps=1e-4, n_steps=50, sampler_type="ode", pad_dim=None, **kwargs):
     # adapted from https://github.com/NVIDIA/NeMo/blob/78357ae99ff2cf9f179f53fbcb02c88a5a67defb/nemo/collections/audio/parts/submodules/schroedinger_bridge.py#L382
+    pad_dim = pad_dim if pad_dim else [...,None, None]
     def sde_sampler():
         """The SB-SDE sampler function."""
         with torch.no_grad():
-            xt = y[:, [0], :, :] # special case for storm_2ch
+            xt = y.repeat(1, 2, 1)
             time_steps = torch.linspace(sde.T, eps, sde.N + 1, device=y.device)
 
             # Initial values
@@ -301,7 +302,7 @@ def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kw
                 sigma_t, sigma_T, sigma_bart, alpha_t, alpha_T, alpha_bart = sde._sigmas_alphas(time)
 
                 # Run DNN
-                current_estimate = model(xt, y, time)
+                current_estimate = model(xt, time, y)
 
                 # Calculate scaling for the first-order discretization from the paper
                 weight_prev = alpha_t * sigma_t**2 / (alpha_prev * sigma_prev**2 + sde.eps)
@@ -310,9 +311,9 @@ def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kw
                 weight_z = alpha_t * sigma_t * torch.sqrt(tmp)
 
                 # View as [B, C, D, T]
-                weight_prev = weight_prev[:, None, None, None]
-                weight_estimate = weight_estimate[:, None, None, None]
-                weight_z = weight_z[:, None, None, None]
+                weight_prev = weight_prev[pad_dim]
+                weight_estimate = weight_estimate[pad_dim]
+                weight_z = weight_z[pad_dim]
 
                 # Random sample
                 z_norm = torch.randn_like(xt)
@@ -334,7 +335,7 @@ def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kw
     def ode_sampler():
         """The SB-ODE sampler function."""
         with torch.no_grad():
-            xt = y
+            xt = y.repeat(1, 2, 1)
             time_steps = torch.linspace(sde.T, eps, sde.N + 1, device=y.device)
 
             # Initial values
@@ -349,7 +350,7 @@ def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kw
                 sigma_t, sigma_T, sigma_bart, alpha_t, alpha_T, alpha_bart = sde._sigmas_alphas(time)
 
                 # Run DNN
-                current_estimate = model(xt, y, time)
+                current_estimate = model(xt, time, y)
 
                 # Calculate scaling for the first-order discretization from the paper
                 weight_prev = alpha_t * sigma_t * sigma_bart / (alpha_prev * sigma_prev * sigma_bar_prev + sde.eps)
@@ -365,9 +366,9 @@ def get_sb_sampler(sde, model, y, eps=1e-4, n_steps=50, sampler_type="ode", **kw
                 )
 
                 # View as [B, C, D, T]
-                weight_prev = weight_prev[:, None, None, None]
-                weight_estimate = weight_estimate[:, None, None, None]
-                weight_prior_mean = weight_prior_mean[:, None, None, None]
+                weight_prev = weight_prev[pad_dim]
+                weight_estimate = weight_estimate[pad_dim]
+                weight_prior_mean = weight_prior_mean[pad_dim]
 
                 # Update state: weighted sum of previous state, current estimate and prior
                 xt = weight_prev * xt + weight_estimate * current_estimate + weight_prior_mean * y

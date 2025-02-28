@@ -26,7 +26,7 @@ def load_model(config):
 
     if "score_model" in config.model:
         model_type = "score_model"
-        model_obj = DiffSepModel #DiffSepOU #LatentDiffSepMix#DiffSepModel
+        model_obj = DiffSepOU  #DiffSepModel #LatentDiffSepMix#DiffSepModel
     else:
         raise ValueError("config/model should have a score_model sub-config")
 
@@ -83,7 +83,7 @@ def load_model(config):
     return model, (load_pretrained is not None)
 
 
-@hydra.main(config_path="./config/diffsep_ouve", config_name="config", version_base=None)
+@hydra.main(config_path="./config/diffsep_sb", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     try:
         nvmlInit()
@@ -141,7 +141,7 @@ def main(cfg: DictConfig):
     if cfg.logger == "wandb":
         pl_logger = pl_loggers.WandbLogger(
             name=cfg.name,
-            project="diffsep_ou", 
+            project="diffsep_sb", 
             save_dir=".",
             mode="online"
         ) # TODO Change to online when ready
@@ -157,7 +157,7 @@ def main(cfg: DictConfig):
     trainer = pl.Trainer(
         devices=[1], #args.num_gpus, [1] for the second GPU, [0, 1] for the first and second GPU etc.
         accelerator="gpu", #"cpu"
-        detect_anomaly=False, #
+        detect_anomaly=True, #
         fast_dev_run=False, #
         #ckpt_path = "exp/default/2025-02-05_23-57-53_/diffsep/uybp2mnq/checkpoints/epoch-029_si_sdr-14.804.ckpt",
         num_nodes = 1,

@@ -8,7 +8,6 @@ from collections import defaultdict
 from contextlib import nullcontext
 from pathlib import Path
 
-import fast_bss_eval
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -19,6 +18,7 @@ from scipy.optimize import linear_sum_assignment
 from torch_ema import ExponentialMovingAverage
 
 import sdes
+import sdes.sdes
 import utils
 
 log = logging.getLogger(__name__)
@@ -1483,6 +1483,7 @@ class LatentDiffSepMix(pl.LightningModule):
 
 
 class DiffSepOU(pl.LightningModule):
+
     def __init__(self, config: DictConfig):
         # init superclass
         super().__init__()
@@ -1541,8 +1542,12 @@ class DiffSepOU(pl.LightningModule):
         self._error_loading_ema = False
         self.normalize_batch = utils.normalize_batch
         self.denormalize_batch = utils.denormalize_batch
-        self.backbone = "ncsnpp"
-        self.network_scaling = None
+        
+        self.is_edm = isinstance(self.sde, sdes.sdes.SBVESDE)
+        if self.is_edm: # for SB
+            self.network_scaling = getattr(config.model,"network_scaling", "1/sigma" )
+            self.c_in = self.c_out = self.c_skip = getattr(config.model, "c", "edm" )
+            self.sigma_data = getattr(config.model, "sigma_data", 0.1 )
 
     def sample_time(self, x):
         bsz = x.shape[0]
@@ -1562,9 +1567,12 @@ class DiffSepOU(pl.LightningModule):
         return x_t, time, sigma, z
 
     def forward(self, xt, time, mix):
-        if self.backbone == "ncsnpp_v2":
-            pad_dim = (...,) + (None,) * (F.ndim - time.ndim)
-            F = self.score_model(self._c_in(time) * xt, self._c_in(time) * mix, time)
+        if self.is_edm:
+            pad_dim = (...,) + (None,) * (xt.ndim - time.ndim)
+            c_in = self._c_in(time, pad_dim)
+            c_out = self._c_out(time, pad_dim) 
+            c_skip = self._c_skip(time, pad_dim)
+            F = self.score_model(c_in * xt, time, c_in * mix)
             
             # Scaling the network output
             if self.network_scaling == "1/sigma":
@@ -1573,20 +1581,9 @@ class DiffSepOU(pl.LightningModule):
             elif self.network_scaling == "1/t":
                 F = F / time[pad_dim]
 
-            # The loss type determines the output of the model
-            if self.loss_type == "score_matching":
-                score = self._c_skip(time) * xt + self._c_out(time) * F
-                return score
-            elif self.loss_type == "denoiser":
-                sigmas = self.sde._std(time)[pad_dim]
-                score = (F - xt) / sigmas.pow(2)
-                return score
-            elif self.loss_type == 'data_prediction':
-                x_hat = self._c_skip(time) * xt + self._c_out(time) * F
-                return x_hat
-            
-        else:
-            return self.score_model(xt, time, mix)
+            return c_skip * xt + c_out * F
+
+        return self.score_model(xt, time, mix)
 
     def _step(self, y, x):
         x_t, t, sigma, z = self.sample_prior(y, x)
@@ -1595,8 +1592,6 @@ class DiffSepOU(pl.LightningModule):
     def compute_score_loss(self, y, x):
         # predict the score
         pred_score, sigma, z = self._step(y, x)
-        # compute the MSE loss
-        #loss =  #check sign
         loss = self.loss(pred_score*sigma, -z)
         loss = loss.mean(dim=tuple(range(2 - loss.ndim , 0)))
         return loss
@@ -1683,17 +1678,16 @@ class DiffSepOU(pl.LightningModule):
         time = mix.new_ones(mix.shape[0]) * self.sde.T
 
         # sample the target noise vector
-        z0 = torch.randn_like(target) 
-
+        z0 = torch.randn_like(target)  # (batch, channels, latent, samples)
         # we need to recompute mean and L
         losses = []
         pad_dim = (...,) + (None,) * (mix.ndim - time.ndim)
         for perm in itertools.permutations(range(target.shape[1])):
             mean, std = self.sde.marginal_prob(target[:, perm, ...], time, mix)
-            sigma = std[pad_dim] #[:, None, None, None]
-
+            sigma = std if self.is_edm else std[pad_dim]
             # include the difference between the real mixture and the model in the noise
-            z = z0 + (mix - mean)/sigma
+            z = z0 if self.is_edm else (z0 + (mix - mean)/sigma)
+
             x_t = mix + sigma * z0
             # predict the score
             pred_score = self(x_t, time, mix)
@@ -1777,7 +1771,7 @@ class DiffSepOU(pl.LightningModule):
                 loss = self.train_step_init_5(mix, target)
             else:
                 loss = self.compute_score_loss(mix, target)
-
+        
         self.log("val/score_loss", loss, on_epoch=True, sync_dist=True)
         
         # validation separation losses
@@ -2003,34 +1997,42 @@ class DiffSepOU(pl.LightningModule):
         sde.N = N if N is not None else sde.N
         return sdes.get_sb_sampler(sde, self, y=y, sampler_type=sampler_type, **kwargs)
 
-    def _c_in(self, t):
+    def _c_in(self, t, pad_dim=None):
         if self.c_in == "1":
             return 1.0
         elif self.c_in == "edm":
             sigma = self.sde._std(t)
-            return (1.0 / torch.sqrt(sigma**2 + self.sigma_data**2))[:, None, None, None]
+            if pad_dim:
+                return (self.sigma_data**2 / (sigma**2 + self.sigma_data**2))[pad_dim]
+            return (1.0 / torch.sqrt(sigma**2 + self.sigma_data**2))
         else:
             raise ValueError("Invalid c_in type: {}".format(self.c_in))
     
-    def _c_out(self, t):
+    def _c_out(self, t, pad_dim=None):
         if self.c_out == "1":
             return 1.0
         elif self.c_out == "sigma":
-            return self.sde._std(t)[:, None, None, None]
+            return self.sde._std(t)
         elif self.c_out == "1/sigma":
-            return 1.0 / self.sde._std(t)[:, None, None, None] 
+            if pad_dim:
+                return 1.0 / self.sde._std(t)[pad_dim]
+            return 1.0 / self.sde._std(t) 
         elif self.c_out == "edm":
             sigma = self.sde._std(t)
-            return ((sigma * self.sigma_data) / torch.sqrt(self.sigma_data**2 + sigma**2))[:, None, None, None]
+            if pad_dim:
+                return ((sigma * self.sigma_data) / torch.sqrt(self.sigma_data**2 + sigma**2))[pad_dim]
+            return ((sigma * self.sigma_data) / torch.sqrt(self.sigma_data**2 + sigma**2))
         else:
             raise ValueError("Invalid c_out type: {}".format(self.c_out))
     
-    def _c_skip(self, t):
+    def _c_skip(self, t, pad_dim=None):
         if self.c_skip == "0":
             return 0.0
         elif self.c_skip == "edm":
             sigma = self.sde._std(t)
-            return (self.sigma_data**2 / (sigma**2 + self.sigma_data**2))[:, None, None, None]
+            if pad_dim:
+                return (sigma**2 / (sigma**2 + self.sigma_data**2))[pad_dim]
+            return (self.sigma_data**2 / (sigma**2 + self.sigma_data**2))
         else:
             raise ValueError("Invalid c_skip type: {}".format(self.c_skip))
 
@@ -2042,9 +2044,12 @@ class DiffSepOU(pl.LightningModule):
             sampler_kwargs.update(kwargs, merge=True)
         
         #Reverse sampling
-        sampler = self.get_pc_sampler(
-            "reverse_diffusion", "ald", mix, **sampler_kwargs
-        )
+        if self.is_edm: #sampler = self.get_sb_sampler(sde=self.sde, y=Y.cuda(), sampler_type=self.sde.sampler_type)
+            sampler = self.get_sb_sampler(self.sde, mix, **sampler_kwargs)
+        else:
+            sampler = self.get_pc_sampler(
+                "reverse_diffusion", "ald", mix, **sampler_kwargs
+            )
 
         #est, *others = sampler()
         #est = self.denormalize_batch(est, *stats)
