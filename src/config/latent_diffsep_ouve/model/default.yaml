@@ -18,8 +18,14 @@ score_model:
     num_sources: ${model.n_speakers}
     backbone_args:
         _target_: models.diffsep.ncsnpp.NCSNpp
-        nf: 64 # change to 128?
+        nf: 128 #256 
+        ch_mult: [1, 2, 2] #[2, 2, 2, 2] # [2, 2, 2, 2, 2]
+        num_res_blocks: 2
+        attn_resolutions: [16]
+        resamp_with_conv: True
         image_size: 64
+        centered: True # Very important for the model to work
+    max_latent_length: 4 #16
 vae:
     config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
     ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
@@ -29,12 +35,12 @@ sde:
     _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
     theta: 1.5
-    sigma_min: 0.01
-    sigma_max: 5.0
-    N: 45
+    sigma_min: 0.96
+    sigma_max: 10.0
+    N: 30
 
 sampler:
-    N: 45
+    N: 30
     snr: 0.5
     corrector_steps: 1
 
@@ -55,11 +61,9 @@ val_losses:
         fs: ${model.fs}
 
 optimizer:
-    _target_: torch.optim.AdamW
-    lr: 0.00015
+    _target_: torch.optim.Adam
+    lr: 0.000012 #0.000008 #0.000015  ##0.00003#0.0002
     betas: [0.8, 0.99]
-    weight_decay: 0.001
-    amsgrad: false
 
 scheduler: null
 grad_clipper:

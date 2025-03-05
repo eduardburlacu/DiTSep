@@ -4,7 +4,7 @@ defaults:
     - model: default
     - trainer: default
     - experiment: null
-
+load_pretrained: 'exp/default/2025-02-05_23-57-53_/diffsep/uybp2mnq/checkpoints/epoch-029_si_sdr-14.804.ckpt'
 seed: 64736289
 name: default  # experiment name
 train: true

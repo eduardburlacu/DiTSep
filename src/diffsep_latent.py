@@ -1,8 +1,3 @@
-"""
-Combined from:
-https://github.com/sp-uhh/sgmse/blob/main/sgmse/model.py
-"""
-
 import datetime
 import itertools
 import json
@@ -109,19 +104,20 @@ class LatentDiffSep(pl.LightningModule):
 
         self._error_loading_ema = False
 
-    @torch.no_grad() #TODO: Change to trainable VAE
+    @torch.no_grad() 
     def encode(self, mix, target):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
-        target = utils.pad(target, self.vae.encoder.hop_length)
         mix = self.vae.encode(mix, iterate_batch=False).unsqueeze(1)
         self.max_len_lat = max(self.max_len_lat, mix.shape[-1])
-        bsz, n_src, seq_len = target.shape
-        target = target.reshape(bsz*n_src, 1, seq_len)
-        target = self.vae.encode(target, iterate_batch=False)
-        target = target.reshape(bsz, n_src, *target.shape[1:])
+        if target is not None:
+            target = utils.pad(target, self.vae.encoder.hop_length)
+            bsz, n_src, seq_len = target.shape
+            target = target.reshape(bsz*n_src, 1, seq_len)
+            target = self.vae.encode(target, iterate_batch=False)
+            target = target.reshape(bsz, n_src, *target.shape[1:])
         return mix, target
 
-    @torch.no_grad() #TODO: Change to trainable VAE
+    @torch.no_grad()
     def decode(self, est):
         bsz, n_src, latent_dim, seq_len = est.shape
         est = est.reshape(bsz * n_src, latent_dim, seq_len)
@@ -158,89 +154,10 @@ class LatentDiffSep(pl.LightningModule):
         pred_score, sigma, z = self._step(y, x)
         # compute the MSE loss
         loss = self.loss(pred_score*sigma, -z) #check sign
-        if loss.ndim == 4:
-            loss = loss.mean(dim=(-3, -2, -1))
+        loss = loss.mean(dim=tuple(range(2 - loss.ndim , 0)))
         return loss
 
-    def compute_score_loss_with_pit(self, mix, target):
-
-        time = self.sample_time(target)
-        # get parameters of marginal distribution of x(t)
-        means = []
-        for p in itertools.permutations(range(target.shape[1])):
-            # get parameters of marginal distribution of x(t)
-            mean, std = self.sde.marginal_prob(x0=target[:, p, ...], t=time, y=mix)
-            means.append(mean)
-        means = torch.stack(means, dim=1)  # (batch, perm, src, latent, seq_len)
-        n_perm = means.shape[1]
-        
-        # sample normal vector
-        z = torch.randn_like(target)
-        sigma_z = std[:, None, None, None] * z
-
-        # select one of the permutations at random
-        mean_select = utils.select_elem_at_random(means, dim=1)
-        xt = mean_select + sigma_z[:, None, ...]
-
-        # compute the model mismatch to noise ratio
-        err = means - mean_select
-        n_elems = (means.shape[1] - 1) * means.shape[2] * means.shape[3] * means.shape[4]
-        err_pow = err.square().sum(dim=(1, 2, 3, 4)) / n_elems
-        noise_pow = sigma_z.square().mean(dim=(1, 2))
-        mmnr = 10.0 * torch.log10(err_pow / noise_pow.clamp(min=1e-5))
-
-        # select which samples require PIT
-        select_pit = mmnr < self.config.model.mmnr_thresh_pit
-        n_pit = select_pit.sum()
-        select_reg = ~select_pit
-        n_reg = select_reg.sum()
-
-        losses = []
-
-        # compute loss with pit
-        if n_pit > 0:
-            mix_ = torch.broadcast_to(
-                mix[select_pit, None, ...], (n_pit, n_perm) + mix.shape[-2:]
-            )
-            mix_ = mix_.flatten(end_dim=1)
-            xt_ = torch.broadcast_to(xt[select_pit], (n_pit, n_perm) + xt.shape[-2:])
-            xt_ = xt_.flatten(end_dim=1)
-            L_ = torch.broadcast_to(
-                L[select_pit, None, ...], (n_pit, n_perm) + L.shape[-2:]
-            )
-            L_ = L_.flatten(end_dim=1)
-            z_ = torch.broadcast_to(
-                z[select_pit, None, ...], (n_pit, n_perm) + z.shape[-2:]
-            )
-            z_ = z_.flatten(end_dim=1)
-            z_extra = self.sde.mult_std_inv(L_, err[select_pit].flatten(end_dim=1))
-            z_pit = z_ + z_extra
-            time_ = torch.broadcast_to(time[select_pit, None], (n_pit, n_perm))
-            time_ = time_.flatten(end_dim=1)
-            pred_pit = self(xt_, time_, mix_)
-            loss_pit = (
-                (self.sde.mult_std(L_, pred_pit) + z_pit).square().mean(dim=(-2, -1))
-            )
-            loss_pit = loss_pit.reshape((n_pit, n_perm)).min(dim=-1).values
-            losses.append(loss_pit)
-            #log.debug(f"Loss PIT shape: {loss_pit.shape}")
-
-        # compute loss without pit
-        if n_reg > 0:
-            mix_ = mix[select_reg]
-            xt_ = xt[select_reg, 0, ...]
-            L_ = L[select_reg]
-            z_ = z[select_reg]
-            pred_reg = self(xt_, time[select_reg], mix_)
-            loss_reg = (
-                (self.sde.mult_std(L_, pred_reg) + z_).square().mean(dim=(-2, -1))
-            )
-            losses.append(loss_reg)
-
-        return torch.cat(losses)
-
     def compute_score_loss_init_hack_pit(self, mix, target):
-        """Still thinking what to do here..."""
         # The time is fixed to T here
         time = mix.new_ones(mix.shape[0]) * self.sde.T
 
@@ -253,17 +170,16 @@ class LatentDiffSep(pl.LightningModule):
         for perm in itertools.permutations(range(target.shape[1])):
             mean, std = self.sde.marginal_prob(target[:, perm, ...], time, mix)
             sigma = std[pad_dim]
-
             # include the difference between the real mixture and the model in the noise
             z = z0 + (mix - mean)/sigma
             x_t = mix + sigma * z0
             # predict the score
             pred_score = self(x_t, time, mix)
             # compute the MSE loss
-            loss = self.loss(pred_score*sigma, -z).mean(dim=tuple(range(2 - loss.ndim , 0)))
+            loss = self.loss(pred_score*sigma, -z)
+            loss = loss.mean(dim=tuple(range(2 - loss.ndim , 0)))
             # compute score and error
             losses.append(loss)  # (batch)
-            #log.debug(f"Loss init hack shape: {loss.shape}")
 
         loss_val = torch.stack(losses, dim=1).min(dim=1).values
         return loss_val
@@ -328,11 +244,9 @@ class LatentDiffSep(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx, dataset_i=0):
         mix, target = batch
-        
-        with torch.no_grad():
-            #pad, encode, normalize the mix and target        
-            mix, target_latent = self.encode(mix, target)
-        
+        target_latent = target.clone()
+        with torch.no_grad(): #pad, encode, normalize the mix and target  
+            mix, target_latent = self.encode(mix, target_latent)
             # validation score loss
             if self.init_hack == 5:
                 loss = self.train_step_init_5(mix, target_latent)
@@ -549,12 +463,9 @@ class LatentDiffSep(pl.LightningModule):
             return batched_sampling_fn
 
     @torch.no_grad()
-    def separate(self, mix, target_dim = None,latent=False, **kwargs):
-        if not latent:
-            #pad the mix to match the VAE input size
-            mix = utils.pad(mix, self.vae.encoder.hop_length)
-            with torch.no_grad():
-                mix = self.vae.encode(mix).unsqueeze(1) #TODO Check on that unsqueeze
+    def separate(self, mix, target_dim = None, latent=False, **kwargs):
+        if not latent: #pad the mix to match the VAE input size
+            mix, _ = self.encode(mix, None)
         
         sampler_kwargs = self.config.model.sampler.copy()
         with open_dict(sampler_kwargs):
