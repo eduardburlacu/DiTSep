@@ -118,11 +118,13 @@ class LatentDiffSep(pl.LightningModule):
         return mix, target
 
     @torch.no_grad()
-    def decode(self, est):
+    def decode(self, est, target_dim=None):
         bsz, n_src, latent_dim, seq_len = est.shape
         est = est.reshape(bsz * n_src, latent_dim, seq_len)
         est = self.vae.decode(est)
         est = est.reshape(bsz, n_src, -1)
+        if target_dim is not None:
+            return est[..., :target_dim]
         return est
 
     def sample_time(self, x):
@@ -477,8 +479,5 @@ class LatentDiffSep(pl.LightningModule):
         )
 
         est, *others = sampler()
-        #log.debug(f"Est latent shape: {est.shape}")
-        est = self.decode(est)
-        if target_dim is not None:
-            return est[..., :target_dim], *others
+        est = self.decode(est, target_dim)
         return est, *others

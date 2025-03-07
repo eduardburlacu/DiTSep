@@ -13,6 +13,7 @@ develop-eggs/
 dist/
 downloads/
 notebooks/
+results*/
 eggs/
 .eggs/
 lib/
@@ -149,14 +150,18 @@ dmypy.json
 /data/
 /logs/
 /LOGS/
+/diffsep*/
+nohup.out
 
 # Lightning-Hydra-Template Stuff
 src/config/diffsep/config.yaml
 src/config/diffsep/datamodule/
 src/config/latent_diffsep_ouve/datamodule/
 src/config/latent_diffsep_mix/datamodule/
+src/config/ldm/datamodule/
 src/config/latent_diffsep_ouve/config.yaml
 src/config/latent_diffsep_mix/config.yaml
+src/config/ldm/config.yaml
 
 docs/notebooks/
 exp/

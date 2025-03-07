@@ -26,10 +26,13 @@ score_model:
         image_size: 64
         centered: True # Very important for the model to work
     max_latent_length: 4 #16
+    train: False
+
 vae:
     config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
     ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
-    trainable_vae: false
+    train_encoder: False
+    train_decoder: True
 
 sde:
     _target_: sdes.sdes.OUVESDE
@@ -52,7 +55,7 @@ main_val_loss_mode: max
 val_losses:
     val/si_sdr:
         _target_: models.diffsep.losses.SISDRLoss
-        zero_mean: true
+        zero_mean: false
         clamp_db: 30
         reduction: mean
         sign_flip: true

@@ -1,0 +1,111 @@
+defaults:
+    - _self_
+
+ema_decay: 0.999
+valid_max_sep_batches: 2
+time_sampling_strategy: uniform
+train_source_order: pit
+init_hack: 5
+init_hack_p: 0.0
+mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
+use_ema: true
+clip_grad_norm: 5.0
+
+discriminator:
+    _target_: stable_audio_tools.models.discriminators.Encodec
+    filters: 64
+    n_ffts: [2048, 1024, 512, 256, 128]
+    hop_lengths: [512, 256, 128, 64, 32]
+    win_lengths: [2048, 1024, 512, 256, 128]
+    weights:
+        adversarial: 0.1
+        feature_matching: 5.0
+#loss_config
+loss:
+    score_match:
+        _target_: torch.nn.MSELoss
+    
+    bottleneck:
+        _target_: stable_audio_tools.training.losses.ValueLoss
+        type: "kl"
+        name: 'kl_loss'
+        weight: 0.0001
+
+    time:
+        _target_: stable_audio_tools.training.losses.ValueLoss
+        name: 'time_loss'
+        type: "l1"
+        weight: 0.0
+
+    spectral:
+        _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
+        name: 'spectral_loss'
+        type: "mrstft"
+        sample_rate: ${model.fs}
+        fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
+        hop_sizes: [512, 256, 128, 64, 32, 16, 8]
+        perceptual_weighting: True
+        weights: 1.0
+        decay: 1.0
+    
+    adv:
+        _target_: stable_audio_tools.training.losses.ValueLoss
+        name: 'loss_adv'
+        weight: 
+
+    feature_matching:
+        _target_: stable_audio_tools.training.losses.ValueLoss
+        name: 'feature_matching_loss'
+        weight:
+
+main_val_loss: val/si_sdr
+main_val_loss_mode: max
+
+val_losses:
+    val/sisdr:
+        _target_: models.diffsep.losses.SISDRLoss
+        zero_mean: true
+        clamp_db: 30
+        reduction: mean
+        sign_flip: true
+    val/pesq:
+        _target_: models.diffsep.losses.PESQ
+        fs: ${model.fs}
+
+    val/stft:
+        _target_: stable_audio_tools.training.losses.auraloss.STFTLoss
+
+    val/mel:
+        _target_: stable_audio_tools.training.losses.auraloss.MelSTFTLoss
+
+optimizer:
+    ldm:
+        _target_: torch.optim.AdamW
+        lr: 0.00015
+        betas: [0.8, 0.99]
+        weight_decay: 0.001
+        amsgrad: true
+
+    discriminator:
+        _target_: torch.optim.AdamW
+        lr: ${2*model.optimizer.ldm.lr}
+        betas: ${model.optimizer.ldm.betas}
+        weight_decay: ${model.optimizer.ldm.weight_decay}
+        amsgrad: ${model.optimizer.ldm.amsgrad}
+
+    scheduler:
+        _target_: torch.optim.lr_scheduler.InverseLR
+        inv_gamma: 200000
+        power: 0.5
+        warmup:
+
+ema:
+    beta: 0.9999
+    power: 0.75
+    update_every: 1
+    update_after_step: 1
+
+scheduler: null
+
+demo:
+    demo_every: 2000

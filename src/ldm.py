@@ -26,6 +26,9 @@ from stable_audio_tools.interface.aeiou import audio_spectrogram_image, tokens_s
 from ema_pytorch import EMA
 from einops import rearrange
 from safetensors.torch import save_model
+import logging
+
+log = logging.getLogger(__name__)
 
 def trim_to_shortest(a, b):
     """Trim the longer of two tensors to the length of the shorter one."""
@@ -46,16 +49,14 @@ class LDM(pl.LightningModule):
     ):
         super().__init__()
         self.config = config
+        self.save_hyperparameters()
+        os.environ["HYDRA_FULL_ERROR"] = "1"
         
-        # Load the pretrained VAE
+        # Load the VAE and set the mode
         self.vae = instantiate(config.model.vae)
-        if self.trainable_vae:
-            #we add the training wrapper for VAE optimization
-            self.vae.requires_grad_(True)
-            self.vae.train()
-        else:
-            self.vae.requires_grad_(False)
-            self.vae.eval()
+        self.score_model = instantiate(self.config.model.score_model, _recursive_=False)
+        self.set_model_mode()
+
         # Set up EMA for model weights
         self.vae_ema = None if not self.use_ema else EMA(self.vae, **self.config.ema)
 
@@ -156,10 +157,30 @@ class LDM(pl.LightningModule):
     def use_ema(self):
         return self.config.model.use_ema
 
-    @property
-    def trainable_vae(self):
-        return self.config.model.vae.trainable_vae
-    
+    def set_model_mode(self):
+        # VAE
+        if self.config.model.vae.train_encoder and self.config.model.vae.train_decoder:
+            self.vae.train()
+            self.vae.requires_grad_(True)
+        elif self.config.model.vae.train_decoder:
+            self.vae.encoder.eval()
+            self.vae.encoder.requires_grad_(False)
+            self.vae.decoder.train()
+            self.vae.decoder.requires_grad_(True)
+        elif self.config.model.vae.train_encoder:
+            raise NotImplementedError("Training the encoder only is not supported.")
+        else:
+            self.vae.eval()
+            self.vae.requires_grad_(False)
+        #Score model
+        if self.config.model.score_model.train:
+            self.score_model.train()
+            self.score_model.requires_grad_(True)
+        else:
+            self.score_model.eval()
+            self.score_model.requires_grad_(False)
+        
+   
     @property
     def lr(self):
         return self.config.model.optimizer.ldm.lr

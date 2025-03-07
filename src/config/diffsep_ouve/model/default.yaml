@@ -13,21 +13,31 @@ init_hack: 5
 mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
 
 score_model:
-    _target_: models.diffsep.score_models.LatentScoreModelNCSNpp
+    _target_: models.diffsep.score_models.ScoreModelNCSNpp
     num_sources: ${model.n_speakers}
+    stft_args:
+        n_fft: 510
+        hop_length: 128
+        center: True
+        pad_mode: "constant"
     backbone_args:
         _target_: models.diffsep.ncsnpp.NCSNpp
-        nf: 64 # change to 128?
+        nf: 64 #128 from HF
+        ch_mult: [1, 1, 2, 2, 2, 2, 2]
+        num_res_blocks: 2
+        attn_resolutions: [16]
+        resamp_with_conv: True
+        image_size: 256
 
-vae:
-    config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
-    ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
-    trainable_vae: false
+    transform: exponent
+    spec_abs_exponent: 0.5
+    spec_factor: 0.15 #0.33
+    spec_trans_learnable: false
 
 sde:
-    _target_: sdes.sdes.MixSDE
+    _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
-    d_lambda: 2.0
+    theta: 1.5
     sigma_min: 0.05
     sigma_max: 0.5
     N: 30
@@ -55,9 +65,10 @@ val_losses:
 
 optimizer:
     _target_: torch.optim.Adam
-    lr: 0.0001
+    lr: 0.0002 #0.0001
     weight_decay: 0.0
 scheduler: null
 grad_clipper:
     _target_: utils.FixedClipper
     max_norm: 5.0
+init_hack_p: 0.1

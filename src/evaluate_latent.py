@@ -23,62 +23,9 @@ from pystoi import stoi
 
 import utils
 from datasets import WSJ0_mix
-from diffsep import DiffSepOU
+from diffsep_latent import LatentDiffSep
 
 os.environ["HYDRA_FULL_ERROR"] = "1"
-
-
-def load_model(config, ckpt_path=None):
-
-    if "score_model" in config.model:
-        model_type = "score_model"
-        model_obj = DiffSepOU
-    else:
-        raise ValueError("config/model should have a score_model sub-config")
-
-    #ckpt_path = Path(to_absolute_path(load_pretrained))
-    hparams_path = (
-        ckpt_path.parents[1] / "hparams.yaml"
-    )  # path when using lightning checkpoint
-    hparams_path_alt = (
-        ckpt_path.parents[0] / "hparams.yaml"
-    )  # path when using calibration output checkpoint
-
-    if hparams_path_alt.exists():
-        log.info(f"  - {hparams_path_alt=}")
-        # this was produced by the calibration routing
-        with open(hparams_path, "r") as f:
-            conf = yaml.safe_load(f)
-            config_seld_model = conf["config"]["model"][model_type]
-
-        config.model.seld_model.update(config_seld_model)
-        model = model_obj(config)
-
-        state_dict = torch.load(str(ckpt_path))
-
-        log.info("Load model state_dict")
-        model.load_state_dict(state_dict, strict=True)
-
-    elif hparams_path.exists():
-        log.info(f"  - {hparams_path=}")
-        # this is a checkpoint
-        with open(hparams_path, "r") as f:
-            conf = yaml.safe_load(f)
-            config_seld_model = conf["config"]["model"][model_type]
-
-        config.model.seld_model.update(config_seld_model)
-
-        log.info("Load model from lightning checkpoint")
-        model = model_obj.load_from_checkpoint(
-            ckpt_path, strict=True, config=config
-        )
-
-    else:
-        raise ValueError(
-            f"Could not find the hparams.yaml file for checkpoint {ckpt_path}"
-        )
-
-    return model
 
 
 def get_default_datasets(n_spkr=2, fs=8000, USE_WSJ0 = False, USE_LIBRIMIX=True):
@@ -154,7 +101,7 @@ def save_samples(mix, x_result, target, wav_out_fn, fs):
     torchaudio.save(
         str(wav_out_fn.with_suffix(".enh1.wav")), all_wav[2], fs,
     )
-    """
+
     torchaudio.save(
         str(wav_out_fn.with_suffix(".tgt0.wav")),
         all_wav[3],
@@ -165,7 +112,7 @@ def save_samples(mix, x_result, target, wav_out_fn, fs):
         all_wav[4],
         fs,
     )
-    """
+
 
 
 def compute_metrics(ref, est, fs, pesq_mode="nb", stoi_extended=True):
@@ -229,35 +176,32 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model
         dataset = WSJ0_mix(path="data/wsj0_mix", n_spkr=2, cut="max", split=split)
 
     else:
-        # load the config file
-        with open("/research/milsrg1/user_workspace/efb48/DiTSep/checkpoints/diffsep/hparams.yaml", "r") as f:
-            hparams = yaml.safe_load(f)
-        config = hparams["config"]
 
-        if split in config["datamodule"]:
-            ds_args = config["datamodule"][split]["dataset"]
+        if split in model_config.datamodule:
+            ds_args = model_config.datamodule[split].dataset
         else:
             ds_args = default_datasets[split].dataset
 
         # remove the target because we don't use 'instantiate'
-        ds_args.pop("_target_", None)
+        if "_target_" in ds_args:
+            del ds_args._target_
+        # ds_args.pop("_target_", None)
         # check the location of the data
-        data_path = Path(ds_args["path"])
+        data_path = Path(ds_args.path)
         if not data_path.exists():
             if split in ["val", "test"]:
-                ds_args["path"] = "./data/wsj0_mix"
+                ds_args.path = "./data/wsj0_mix"
             else:
-                ds_args["path"] = "./data/LibriMix"
+                ds_args.path = "./data/LibriMix"
 
         # load validation dataset
         dataset = WSJ0_mix(**ds_args)
 
         #transform the config to a DictConfig
         #model = DiffSepModel.load_from_checkpoint(str(args.ckpt), config = model_config)
-        model =  DiffSepOU(model_config)
+        model =  LatentDiffSep(model_config)
         ckpt = torch.load(str(args.ckpt))["state_dict"]
         model.load_state_dict(ckpt, strict=True)
-        #'model, _ = load_model(model_config,str(args.ckpt))'
 
         # transfer to GPU
         model = model.to(device)
@@ -292,11 +236,13 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model
     results = dict()
 
     for batch_idx, (mix, target) in zip(range(start_idx, stop_idx), dataloader):
-
+        print(f"Initial shape of mix: {mix.shape}, of target: {target.shape}")
         # decide if we want to save some sample and figure
         save_samples_fig = args.save_n is None or (batch_idx < args.save_n)
 
-        mix = mix.to(device)
+        #mix = mix.to(device)
+        mix_latent = mix.clone().to(device)
+        target_latent = target.clone().to(device)
         target = target.to(device)
         length = target.shape[-1] / fs
 
@@ -308,12 +254,14 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model
             save_samples_fig = False
 
         else:
-            (mix, target), _, _ = model.normalize_batch((mix, target))
+
+            mix_latent, target_latent = model.encode(mix_latent, target_latent)
+            print(f"""Initial shape of mix_latent: {mix_latent.shape}, of target_latent: {target_latent.shape}""")
 
             sampler = model.get_pc_sampler(
                 "reverse_diffusion",
                 "ald",
-                mix,
+                mix_latent,
                 N=N,
                 denoise=denoise,
                 intermediate=save_samples_fig,
@@ -324,6 +272,8 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model
 
             t_s = time.perf_counter()
             x_result, nfe, *others = sampler()
+            x_result = model.decode(x_result, target.shape[-1])
+
             t_proc = time.perf_counter() - t_s
 
             if len(others) > 0:
@@ -382,7 +332,7 @@ def evaluate_process(args, output_dir, split, start_idx, stop_idx, device, model
                 vmin=-75,
                 vmax=0,
             )
-
+            print(f"Tensor shapes before save_samples: {mix.shape}, {x_result.shape}, {target.shape}")
             save_samples(mix, x_result, target, wav_out_dir / f"{batch_idx:04d}", fs)
 
     return split, results
@@ -395,13 +345,13 @@ def str_or_int(x):
         pass
     return x
 
-@hydra.main(config_path="./config/diffsep_ouve", config_name="config", version_base=None)
+@hydra.main(config_path="./config/latent_diffsep_ouve", config_name="config", version_base=None)
 def main(model_config:DictConfig):
     torch.multiprocessing.set_start_method("spawn")
 
     args = dict()
-    args["ckpt"] = Path("diffsep_ou/sgkiv80c/checkpoints/epoch-024_si_sdr-14.408.ckpt")
-    args["output_dir"] = Path("results_ouve")
+    args["ckpt"] = Path("diffsep_latent/zysma1be/checkpoints/epoch-029_si_sdr--17.138.ckpt")
+    args["output_dir"] = Path("results_latent")
     args["device"] = [0]
     args["workers"] = 0
     args["dl_workers"] = 0
@@ -432,8 +382,8 @@ def main(model_config:DictConfig):
 
     else:
         # load the config file
-        # hparams = OmegaConf.load("/research/milsrg1/user_workspace/efb48/DiTSep/checkpoints/diffsep/hparams.yaml")
-        # config = hparams.config
+        #hparams = OmegaConf.load("/research/milsrg1/user_workspace/efb48/DiTSep/checkpoints/diffsep/hparams.yaml")
+        #config = hparams.config
 
         # prepare inference parameters
         sampler_kwargs = model_config.model.sampler
@@ -479,7 +429,8 @@ def main(model_config:DictConfig):
                 ds_args = default_datasets[split].dataset
 
             # remove the target because we don't use 'instantiate'
-            ds_args.pop("_target_", None)
+            #ds_args.pop("_target_", None)
+            del ds_args._target_
             # check the location of the data
             data_path = Path(ds_args.path)
             if not data_path.exists():

@@ -1,0 +1,64 @@
+defaults:
+    - _self_
+
+n_speakers: 2
+fs: 8000
+t_eps: 0.03
+t_rev_init: 0.03
+
+sde:
+    _target_: sdes.sdes.OUVESDE
+    ndim: ${model.n_speakers}
+    theta: 1.5
+    sigma_min: 0.01
+    sigma_max: 8.0
+    N: 30
+
+sampler:
+    N: 30
+    snr: 0.5
+    corrector_steps: 1
+
+score_model:
+    _target_: models.diffsep.score_models.LatentScoreModelNCSNpp
+    num_sources: ${model.n_speakers}
+    backbone_args:
+        _target_: models.diffsep.ncsnpp.NCSNpp
+        ch_mult: [2, 2, 2, 2, 2]
+        num_res_blocks: 2
+        attn_resolutions: [8, 16]
+        resamp_with_conv: True
+        nf: 64 # change to 128?
+        image_size: 64
+
+vae:
+    config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
+    ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
+    trainable_vae: True
+    model_type: "autoencoder"
+    sample_size: 247808
+    sample_rate: ${model.fs}
+    audio_channels: 1
+    hop_length: 2048
+    model:
+        latent_dim: 64,
+        downsampling_ratio: 2048,
+        io_channels: 1
+        encoder: 
+            _target_: stable_audio_tools.models.autoencoders.OobleckEncoder
+            in_channels: ${model.vae.model.io_channels}
+            channels: 128
+            c_mults: [1,2,4,8,16]
+            strides: [2,4,4,8,8]
+            latent_dim: ${2*model.vae.model.latent_dim}
+
+        decoder:
+            _target_: stable_audio_tools.models.autoencoders.OobleckDecoder
+            out_channels: ${model.vae.model.io_channels}
+            channels: ${model.vae.model.encoder.channels} 
+            c_mults: ${model.vae.model.decoder.c_mults}
+            strides: ${model.vae.model.decoder.strides}
+            latent_dim: ${model.vae.model.latent_dim}
+        
+        bottleneck:
+            type: "vae"
