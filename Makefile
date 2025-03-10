@@ -49,6 +49,9 @@ train_diffsep: ## Train the separation model
 train_diffsep_latent: ## Train the separation model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/out_latent_diffsep_train src/train_diffsep_latent.sh
 
+train_ldm: ## Train the separation model
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/ldm src/ldm.sh
+
 finetune: ## Finetune the model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/finetune finetune.sh
 cont_train_vae:
@@ -62,5 +65,6 @@ eval:
 
 sleep: ## Sleep for 1 hour
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_eval_1000 scripts/sleep.sh
+
 unwrap: ## python ./unwrap_model.py --model-config stable_audio_tools/configs/model_configs/autoencoders/oobleck.json --ckpt-path vae_gan/k5tnlep2/checkpoints/epoch=63-step=1620000.ckpt --name vae_pretrained
 	python ./unwrap_model.py --model-config stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json --ckpt-path vae_gan_finetune/vae_gan_finetune/bjpuomso/checkpoints/epoch=141-step=3600000.ckpt --name vae_finetuned

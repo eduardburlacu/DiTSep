@@ -12,14 +12,12 @@ use_ema: true
 clip_grad_norm: 5.0
 
 discriminator:
-    _target_: stable_audio_tools.models.discriminators.Encodec
+    _target_: stable_audio_tools.models.discriminators.EncodecDiscriminator
     filters: 64
     n_ffts: [2048, 1024, 512, 256, 128]
     hop_lengths: [512, 256, 128, 64, 32]
     win_lengths: [2048, 1024, 512, 256, 128]
-    weights:
-        adversarial: 0.1
-        feature_matching: 5.0
+
 #loss_config
 loss:
     score_match:
@@ -68,15 +66,19 @@ val_losses:
         clamp_db: 30
         reduction: mean
         sign_flip: true
+        
     val/pesq:
         _target_: models.diffsep.losses.PESQ
         fs: ${model.fs}
 
     val/stft:
         _target_: stable_audio_tools.training.losses.auraloss.STFTLoss
+        sample_rate: ${model.fs}
 
-    val/mel:
-        _target_: stable_audio_tools.training.losses.auraloss.MelSTFTLoss
+    val/mrstft:
+        _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
+        sample_rate: ${model.fs}
+
 
 optimizer:
     ldm:

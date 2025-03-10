@@ -72,7 +72,7 @@ class LatentDiffSep(pl.LightningModule):
         self.lr_original = self.config.model.optimizer.lr
 
         self.train_source_order = getattr(
-            self.config.model, "train_source_order", "random"
+            self.config.model, "train_source_o22rder", "random"
         )
 
         # configure the loss functions

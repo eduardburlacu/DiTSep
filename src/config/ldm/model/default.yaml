@@ -10,8 +10,8 @@ sde:
     _target_: sdes.sdes.OUVESDE
     ndim: ${model.n_speakers}
     theta: 1.5
-    sigma_min: 0.01
-    sigma_max: 8.0
+    sigma_min: 0.96
+    sigma_max: 10.0
     N: 30
 
 sampler:
@@ -20,21 +20,27 @@ sampler:
     corrector_steps: 1
 
 score_model:
-    _target_: models.diffsep.score_models.LatentScoreModelNCSNpp
-    num_sources: ${model.n_speakers}
-    backbone_args:
-        _target_: models.diffsep.ncsnpp.NCSNpp
-        ch_mult: [2, 2, 2, 2, 2]
-        num_res_blocks: 2
-        attn_resolutions: [8, 16]
-        resamp_with_conv: True
-        nf: 64 # change to 128?
-        image_size: 64
+    score_ckpt_path: diffsep_latent/zysma1be/checkpoints/epoch-029_si_sdr--17.138.ckpt
+    train_score: False
+    model:
+        _target_: models.diffsep.score_models.LatentScoreModelNCSNpp
+        num_sources: ${model.n_speakers}
+        backbone_args:
+            _target_: models.diffsep.ncsnpp.NCSNpp
+            nf: 128
+            ch_mult: [1, 2, 2]
+            num_res_blocks: 2
+            attn_resolutions: [16]
+            resamp_with_conv: True
+            image_size: 64
+            centered: True # Very important for the model to work
+        max_latent_length: 4
 
 vae:
     config_path: "src/stable_audio_tools/configs/model_configs/autoencoders/oobleck_finetune.json"
     ckpt_path: "checkpoints/vae/vae_finetune.ckpt"
-    trainable_vae: True
+    train_encoder: False
+    train_decoder: True
     model_type: "autoencoder"
     sample_size: 247808
     sample_rate: ${model.fs}
