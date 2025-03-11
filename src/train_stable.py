@@ -1,10 +1,14 @@
-from prefigure.prefigure import get_all_args, push_wandb_config
-import json
+from prefigure.prefigure import push_wandb_config
+import hydra
+from omegaconf import DictConfig
+
 import os
 import torch
+from pynvml import nvmlInit, nvmlSystemGetDriverVersion
 import pytorch_lightning as pl
 import random
 
+from ldm import LDM
 from stable_audio_tools.datasets import WSJ0_mix_Module
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_norm_from_model
@@ -22,35 +26,39 @@ class ModelConfigEmbedderCallback(pl.Callback):
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         checkpoint["model_config"] = self.model_config
 
-def main():
+@hydra.main(config_path="./config/ldm", config_name="config")
+def main(cfg:DictConfig):
+    try:
+        nvmlInit()
+        print("NVML Initialized")
+        print("Driver Version:", nvmlSystemGetDriverVersion())
+    except Exception as e:
+        print("Error initializing NVML:", e)
+        # Handle the error or exit the script
+        exit(1)
 
-    args = get_all_args()
-
-    seed = args.seed
+    seed = cfg.seed
     dataset_name = "2mix"
 
     # Set a different seed for each process if using SLURM
     if os.environ.get("SLURM_PROCID") is not None:
         seed += int(os.environ.get("SLURM_PROCID"))
 
-    random.seed(seed)
-    torch.manual_seed(seed)
+    # seed all RNGs for deterministic behavior
+    pl.seed_everything(cfg.seed)
 
-    #Get JSON config from args.model_config
-    with open(args.model_config) as f:
-        model_config = json.load(f)
+    model_config = cfg.model
+    
+    datamodule = WSJ0_mix_Module(cfg)
 
-    with open(args.dataset_config) as f:
-        dataset_config = json.load(f)
-
-    datamodule = WSJ0_mix_Module(
-        dataset_name = dataset_name, 
-        config = dataset_config
-        )
     datamodule.setup()
     train_dl = datamodule.train_dataloader()
 
-    model = create_model_from_config(model_config)
+    model = LDM.load_from_checkpoint(
+        checkpoint_path=cfg.model.score_model.score_ckpt_path, 
+        config=cfg, 
+        strict=False
+    )
 
     if args.pretrained_ckpt_path:
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
@@ -69,7 +77,7 @@ def main():
 
     wandb_logger = pl.loggers.WandbLogger(
         project=args.name, 
-        mode="online"
+        mode="offline"
     ) # TODO Change to online when ready
     wandb_logger.watch(training_wrapper)
 
@@ -86,46 +94,28 @@ def main():
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
 
     #Combine args and config dicts
-    args_dict = vars(args)
-    args_dict.update({"model_config": model_config})
-    args_dict.update({"dataset_config": dataset_config}, allow_val_change=True)
+    args_dict = vars(cfg)
     push_wandb_config(wandb_logger, args_dict)
 
-    #Set multi-GPU strategy if specified
-    if args.strategy:
-        if args.strategy == "deepspeed":
-            from pytorch_lightning.strategies import DeepSpeedStrategy
-            strategy = DeepSpeedStrategy(stage=2, 
-                                        contiguous_gradients=True, 
-                                        overlap_comm=True, 
-                                        reduce_scatter=True, 
-                                        reduce_bucket_size=5e8, 
-                                        allgather_bucket_size=5e8,
-                                        load_full_weights=True
-                                        )
-        else:
-            strategy = args.strategy
-    else:
-        strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else "auto" 
-
     trainer = pl.Trainer(
-        devices=[1], #args.num_gpus
-        accelerator="gpu", #"cpu"
+        devices=[1],
+        accelerator="gpu", #
         detect_anomaly=False, #
         fast_dev_run=False, #
-        num_nodes = args.num_nodes,
-        strategy=strategy,
-        precision=args.precision,
-        accumulate_grad_batches=args.accum_batches, 
+        accumulate_grad_batches=4, 
+        check_val_every_n_epoch=1,
+        num_nodes = 1,
+        precision=cfg.precision,
+        accumulate_grad_batches=cfg.training.accum_batches, 
         callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
         logger=wandb_logger,
         log_every_n_steps=1_000, #memory usage vital?!
-        max_epochs=10000000,
-        default_root_dir=args.save_dir,
-        gradient_clip_val=args.gradient_clip_val,
+        max_epochs=1_000,
+        default_root_dir=cfg.save_dir,
+        gradient_clip_val=cfg.training.gradient_clip_val,
         reload_dataloaders_every_n_epochs = 0
     )
-    trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
+    trainer.fit(training_wrapper, train_dl, ckpt_path=cfg.ckpt_path if cfg.ckpt_path else None)
 
 if __name__ == '__main__':
     main()

@@ -20,41 +20,29 @@ discriminator:
 
 #loss_config
 loss:
-    score_match:
-        _target_: torch.nn.MSELoss
-    
-    bottleneck:
-        _target_: stable_audio_tools.training.losses.ValueLoss
-        type: "kl"
-        name: 'kl_loss'
-        weight: 0.0001
-
-    time:
-        _target_: stable_audio_tools.training.losses.ValueLoss
-        name: 'time_loss'
-        type: "l1"
-        weight: 0.0
-
     spectral:
-        _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
-        name: 'spectral_loss'
         type: "mrstft"
-        sample_rate: ${model.fs}
-        fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
-        hop_sizes: [512, 256, 128, 64, 32, 16, 8]
-        perceptual_weighting: True
-        weights: 1.0
         decay: 1.0
-    
-    adv:
-        _target_: stable_audio_tools.training.losses.ValueLoss
-        name: 'loss_adv'
-        weight: 
+        weights: 
+            mrstft: 1.0
+        config:
+            _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
+            sample_rate: ${model.fs}
+            fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
+            hop_sizes: [512, 256, 128, 64, 32, 16, 8]
+            win_lengths: [2048, 1024, 512, 256, 128, 64, 32]
+            perceptual_weighting: True
 
-    feature_matching:
-        _target_: stable_audio_tools.training.losses.ValueLoss
-        name: 'feature_matching_loss'
-        weight:
+    discriminator:
+        type: "encodec"
+        weights:
+            adversarial: 0.1
+            feature_matching: 5.0
+    
+    time:
+        type: "l1"
+        weights:
+            l1: 0.0
 
 main_val_loss: val/si_sdr
 main_val_loss_mode: max

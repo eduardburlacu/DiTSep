@@ -1,10 +1,10 @@
 import os
+import math
 import torch
 import torchaudio
 import wandb
 import pytorch_lightning as pl
 
-import itertools
 from copy import deepcopy
 from typing import Literal
 
@@ -45,6 +45,7 @@ class LDM(pl.LightningModule):
             warmup_steps: int = 0,
             warmup_mode: Literal["adv", "full"] = "adv",
             encoder_freeze_on_warmup: bool = False,
+            use_ema: bool = True,
             ema_copy = None,
     ):
         super().__init__()
@@ -88,77 +89,52 @@ class LDM(pl.LightningModule):
         self.warmup_mode = warmup_mode
         self.encoder_freeze_on_warmup = encoder_freeze_on_warmup
 
-        # Discriminator
-        self.use_disc = hasattr(self.config.training, "discriminator") 
-        self.discriminator = instantiate(self.config.training.discriminator) if self.use_disc else None
-
         # Optimization 
-        self.automatic_optimization = not(
-            self.use_disc
-            or self.config.model.score_model.train_score
-        )
+        self.automatic_optimization = False
         self.optimizer_configs = getattr(config.training, "optimizer", None)
-        self.loss_config = getattr(config.training, "loss", None)
-        """
+
         # Losses
-        # 1) Adversarial and feature matching losses
+        self.loss_config = getattr(config.training, "loss", None)
+        if hasattr(self.loss_config, "spectral"):
+            self.sdstft = instantiate(self.loss_config.spectral.config)
+
+        # Discriminator
+        self.use_disc = hasattr(self.config.training, "discriminator") and hasattr(self.loss_config, "discriminator")
+        if self.use_disc:
+            self.discriminator = instantiate(self.config.training.discriminator)
+        else:
+            self.discriminator = None
+            
+        self.gen_loss_modules = []
+
+        # Adversarial and feature matching losses
         self.gen_loss_modules = torch.nn.ModuleList()
         if self.use_disc:
-            if hasattr(self.loss_config,"adv"):
-                self.gen_loss_modules.append(instantiate(self.loss_config.adv))
-            if hasattr(self.loss_config,"feature_matching"):
-                self.gen_loss_modules.append(instantiate(self.loss_config.feature_matching))
+            self.gen_loss_modules.append(
+                ValueLoss(key='loss_adv', weight=self.loss_config.discriminator.weights.adversarial, name='loss_adv')
+            )
+            self.gen_loss_modules.append(
+                 ValueLoss(key='feature_matching_distance', weight=self.loss_config.discriminator.weights.feature_matching, name='feature_matching_loss')
+            )
+        stft_loss_decay = self.loss_config.spectral.decay
 
-        # 2) Spectral Reconstruction loss
         self.gen_loss_modules.append(
-            AuralossLoss(self.sdstft, target_key = 'reals', input_key = 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft'], decay = stft_loss_decay)
+            AuralossLoss(self.sdstft, target_key = 'reals', input_key = 'decoded', name='mrstft_loss', weight=self.loss_config.spectral.weights.mrstft, decay = stft_loss_decay)
         )
-        if "mrmel" in self.loss_config:
-            mrmel_weight = self.loss_config["mrmel"]["weights"]["mrmel"]
-            if mrmel_weight > 0:
-                mrmel_config = self.loss_config["mrmel"]["config"]
-                self.mrmel = MelSpectrogramLoss(self.config.sample_rate,
-                    n_mels=mrmel_config["n_mels"],
-                    window_lengths=mrmel_config["window_lengths"],
-                    pow=mrmel_config["pow"],
-                    log_weight=mrmel_config["log_weight"],
-                    mag_weight=mrmel_config["mag_weight"],
-                )
-                self.gen_loss_modules.append(LossWithTarget(
-                    self.mrmel, "reals", "decoded",
-                    name="mrmel_loss", weight=mrmel_weight,
-                ))
 
-        if "hubert" in self.loss_config:
-            hubert_weight = self.loss_config["hubert"]["weights"]["hubert"]
-            if hubert_weight > 0:
-                hubert_cfg = (
-                    self.loss_config["hubert"]["config"]
-                    if "config" in self.loss_config["hubert"] else dict())
-                self.hubert = HubertLoss(weight=1.0, **hubert_cfg)
-
-                self.gen_loss_modules.append(LossWithTarget(
-                    self.hubert, target_key = "reals", input_key = "decoded",
-                    name="hubert_loss", weight=hubert_weight,
-                    decay = self.loss_config["hubert"].get("decay", 1.0)
-                ))
-
-        if "l1" in self.loss_config["time"]["weights"]:
-            if self.loss_config['time']['weights']['l1'] > 0.0:
+        if "l1" in self.loss_config.time.weights:
+            if self.loss_config.time.weights.l1 > 0.0:
                 self.gen_loss_modules.append(L1Loss(key_a='reals', key_b='decoded',
-                                             weight=self.loss_config['time']['weights']['l1'],
+                                             weight=self.loss_config.time.weights.l1,
                                              name='l1_time_loss',
-                                             decay = self.loss_config['time'].get('decay', 1.0)))
+                                             decay = self.loss_config.time.decay))
 
-        if "l2" in self.loss_config["time"]["weights"]:
+        if "l2" in self.loss_config.time.weights:
             if self.loss_config['time']['weights']['l2'] > 0.0:
                 self.gen_loss_modules.append(MSELoss(key_a='reals', key_b='decoded',
                                              weight=self.loss_config['time']['weights']['l2'],
                                              name='l2_time_loss',
                                              decay = self.loss_config['time'].get('decay', 1.0)))
-
-        if self.vae.bottleneck is not None:
-            self.gen_loss_modules += create_loss_modules_from_bottleneck(self.vae.bottleneck)
 
         self.losses_gen = MultiLoss(self.gen_loss_modules)
 
@@ -168,13 +144,18 @@ class LDM(pl.LightningModule):
             ]
 
             self.losses_disc = MultiLoss(self.disc_loss_modules)
-        """
+
         # evaluation losses & metrics
         self.validation_step_outputs = []
         self.val_losses = torch.nn.ModuleDict()
         for name, loss_args in self.config.training.val_losses.items():
             self.val_losses[name] = instantiate(loss_args)
 
+    @property
+    def clip_grad_norm(self):
+        norm = getattr(self.config.training,"clip_grad_norm", 1.0)
+        return norm
+    
     @torch.no_grad()
     def encode(self, mix, target):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
@@ -237,30 +218,27 @@ class LDM(pl.LightningModule):
         est = self.decode(est, target_dim)
         return est, *others
 
+    def separate_grad(self, mix, target_dim = None, latent=False, **kwargs):
+        if not latent: #pad the mix to match the VAE input size
+            mix, _ = self.encode(mix, None)
+        
+        sampler_kwargs = self.config.model.sampler.copy()
+        with open_dict(sampler_kwargs):
+            sampler_kwargs.update(kwargs, merge=True)
+        
+        #Reverse sampling
+        sampler = self.get_pc_sampler(
+            "reverse_diffusion", "ald", mix, **sampler_kwargs
+        )
+
+        est, *others = sampler()
+        est = self.decode_grad(est, target_dim)
+        return est, *others
+
     def set_train_mode(self):
         self.train_encoder = getattr(self.config.model.vae,"train_encoder", False)
         self.train_decoder = getattr(self.config.model.vae,"train_decoder", True)
         self.train_score = getattr(self.config.model.score_model,"train_score", False)
-
-    @property
-    def train_mode(self):
-        """
-        The following training mode are possible:
-        0: VAE training
-        1: Score model training
-        2: VAE decoder fine-tunining
-        """
-        if self.train_encoder and self.train_decoder:
-            assert not self.train_score, "Cannot train both VAE and score model at the same time"
-            return 0
-        elif self.train_decoder:
-            assert not self.train_score, "Cannot train both VAE and score model at the same time"
-            return 2
-        elif self.train_score :
-            assert not self.train_encoder and not self.train_decoder, "Cannot train both VAE and score model at the same time"
-            return 1
-        else:
-            raise ValueError("Training mode not recognized")
         
     def sample_time(self, x):
         bsz = x.shape[0]
@@ -281,52 +259,160 @@ class LDM(pl.LightningModule):
 
     def forward(self, xt, time, mix):
         return self.score_model(xt, time, mix)
-    
-    def score_loss(self, y, x):
-        # predict the score
-        x_t, t, sigma, z = self.sample_prior(y, x)
-        pred_score = self(x_t, t, y)
-        # compute the MSE loss
-        loss = self.loss(pred_score*sigma, -z) #check sign
-        loss = loss.mean(dim=tuple(range(2 - loss.ndim , 0)))
-        return loss
-    
-    def score_loss_init(self, mix, target):
-        # The time is fixed to T here
-        time = mix.new_ones(mix.shape[0]) * self.sde.T
-        # sample the target noise vector
-        z0 = torch.randn_like(target) 
-        # we need to recompute mean and L
-        losses = []
-        pad_dim = (...,) + (None,) * (mix.ndim - time.ndim)
-        for perm in itertools.permutations(range(target.shape[1])):
-            mean, std = self.sde.marginal_prob(target[:, perm, ...], time, mix)
-            sigma = std[pad_dim]
-            # include the difference between the real mixture and the model in the noise
-            z = z0 + (mix - mean)/sigma
-            x_t = mix + sigma * z0
-            # predict the score
-            pred_score = self(x_t, time, mix)
-            # compute the MSE loss
-            loss = self.loss(pred_score*sigma, -z)
-            loss = loss.mean(dim=tuple(range(2 - loss.ndim , 0)))
-            # compute score and error
-            losses.append(loss)  # (batch)
 
-        loss_val = torch.stack(losses, dim=1).min(dim=1).values
-        return loss_val
-    
     def training_step(self, batch, batch_idx):
+        mix, reals = batch
+        log_dict = {}
+        loss_info = {}
+
         if self.global_step >= self.warmup_steps:
             self.warmed_up = True
         
+        decoded, *_ = self.separate_grad(mix, target_dim=reals.shape[-1], latent=False)
+
+        loss_info["decoded"] = decoded
+        loss_info["reals"] = reals
+        data_std = reals.std()
+
+        if self.use_disc:
+            if self.warmed_up:
+                loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals=reals, fakes=decoded)
+            else:
+                loss_adv = torch.tensor(0.).to(reals)
+                feature_matching_distance = torch.tensor(0.).to(reals)
+
+                if self.warmup_mode == "adv":
+                    loss_dis, _, _ = self.discriminator.loss(reals=reals, fakes=decoded)
+                else:
+                    loss_dis = torch.tensor(0.0).to(reals)
+
+            loss_info["loss_dis"] = loss_dis
+            loss_info["loss_adv"] = loss_adv
+            loss_info["feature_matching_distance"] = feature_matching_distance
+
+        opt_gen = None
+        opt_disc = None
+
+        if self.use_disc:
+            opt_gen, opt_disc = self.optimizers()
+        else:
+            opt_gen = self.optimizers()
+
+        lr_schedulers = self.lr_schedulers()
+
+        sched_gen = None
+        sched_disc = None
+
+        if lr_schedulers is not None:
+            if self.use_disc:
+                sched_gen, sched_disc = lr_schedulers
+            else:
+                sched_gen = lr_schedulers
+
+        # Train the discriminator
+        use_disc = (
+            self.use_disc
+            and self.global_step % 2
+            # Check warmup mode and if it is time to use discriminator.
+            and (
+                (self.warmup_mode == "full" and self.warmed_up)
+                or self.warmup_mode == "adv")
+        )
+
+        if use_disc:
+            loss, losses = self.losses_disc(loss_info)
+
+            log_dict['train/disc_lr'] = opt_disc.param_groups[0]['lr']
+
+            opt_disc.zero_grad()
+            self.manual_backward(loss)
+            if self.clip_grad_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.clip_grad_norm)
+            opt_disc.step()
+
+            if sched_disc is not None:
+                # sched step every step
+                sched_disc.step()
+       
+        else: # Train the generator
+            loss, losses = self.losses_gen(loss_info)
+            if self.use_ema:
+                self.autoencoder_ema.update()
+            opt_gen.zero_grad()
+            self.manual_backward(loss)
+            if self.clip_grad_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), self.clip_grad_norm)
+            opt_gen.step()
+            if sched_gen is not None: # scheduler step every step
+                sched_gen.step()
+
+        log_dict['train/loss'] =  loss.detach().item()
+        log_dict['train/data_std'] = data_std.detach().item()
+        log_dict['train/gen_lr'] = opt_gen.param_groups[0]['lr']
+        for loss_name, loss_value in losses.items():
+            log_dict[f'train/{loss_name}'] = loss_value.detach().item()
+
+        self.log_dict(log_dict, prog_bar=True, on_step=True)
+
+        return loss
+        
     def validation_step(self, batch, batch_idx, **kwargs):
-        return self.val_step_score(
-            batch, batch_idx, **kwargs
-        ) if self.trainable_score else self.val_step_vae(batch, batch_idx, **kwargs)
+        mix, reals = batch        
+        decoded, *_ = self.separate(mix, target_dim=reals.shape[-1], latent=False)
+        data_std = reals.std()
+        loss_info = {}
+        loss_info["reals"] = reals
+        
+        # Run evaluation metrics.
+        val_loss_dict = {}
+        for eval_key, eval_fn in self.eval_losses.items():
+            loss_value = eval_fn(decoded, reals)
+            if eval_key == "sisdr": 
+                loss_value = -loss_value
+            if isinstance(loss_value, torch.Tensor):
+                loss_value = loss_value.item()
+
+            val_loss_dict[eval_key] = loss_value
+
+        self.validation_step_outputs.append(val_loss_dict)
+        return val_loss_dict
+
+    def on_validation_epoch_end(self):
+        sum_loss_dict = {}
+        for loss_dict in self.validation_step_outputs:
+            for key, value in loss_dict.items():
+                if key not in sum_loss_dict:
+                    sum_loss_dict[key] = value
+                else:
+                    sum_loss_dict[key] += value
+
+        for key, value in sum_loss_dict.items():
+            val_loss = value / len(self.validation_step_outputs)
+            val_loss = self.all_gather(val_loss).mean().item()
+            log_metric(self.logger, f"val/{key}", val_loss)
+
+        self.validation_step_outputs.clear()  # free memory
  
     def test_step(self, batch, batch_idx, **kwargs):
         return self.validation_step(batch, batch_idx, **kwargs)
+
+    def configure_optimizers(self):
+        gen_params = list(self.autoencoder.parameters())
+
+        if self.use_disc:
+            opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
+            opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
+            if "scheduler" in self.optimizer_configs['autoencoder'] and "scheduler" in self.optimizer_configs['discriminator']:
+                sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
+                sched_disc = create_scheduler_from_config(self.optimizer_configs['discriminator']['scheduler'], opt_disc)
+                return [opt_gen, opt_disc], [sched_gen, sched_disc]
+            return [opt_gen, opt_disc]
+        else:
+            opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
+            if "scheduler" in self.optimizer_configs['autoencoder']:
+                sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
+                return [opt_gen], [sched_gen]
+            return [opt_gen]
 
     def get_pc_sampler(self, predictor_name, corrector_name,y,N=None,minibatch=None,schedule=None,**kwargs,):
         N = self.sde.N if N is None else N
@@ -393,6 +479,12 @@ class LDM(pl.LightningModule):
 
             return batched_sampling_fn
 
+    def export_model(self, path):
+        torch.save(
+            {
+                "vae": self.vae.state_dict(), 
+                "score_model":self.score_model.state_dict()
+            }, path)
 
 class LDMDemoCallback(pl.Callback):
     def __init__(
@@ -500,38 +592,6 @@ class LDMDemoCallback(pl.Callback):
     def clip_grad_norm(self):
         return self.config.model.clip_grad_norm
 
-def create_loss_modules_from_bottleneck(bottleneck):
-    losses = []
-
-    if isinstance(bottleneck, VAEBottleneck) or isinstance(bottleneck, DACRVQVAEBottleneck) or isinstance(bottleneck, RVQVAEBottleneck):
-        try:
-            kl_weight = self.loss_config['bottleneck']['weights']['kl']
-        except:
-            kl_weight = 1e-6
-
-        kl_loss = ValueLoss(key='kl', weight=kl_weight, name='kl_loss')
-        losses.append(kl_loss)
-
-    if isinstance(bottleneck, RVQBottleneck) or isinstance(bottleneck, RVQVAEBottleneck):
-        quantizer_loss = ValueLoss(key='quantizer_loss', weight=1.0, name='quantizer_loss')
-        losses.append(quantizer_loss)
-
-    if isinstance(bottleneck, DACRVQBottleneck) or isinstance(bottleneck, DACRVQVAEBottleneck):
-        codebook_loss = ValueLoss(key='vq/codebook_loss', weight=1.0, name='codebook_loss')
-        commitment_loss = ValueLoss(key='vq/commitment_loss', weight=0.25, name='commitment_loss')
-        losses.append(codebook_loss)
-        losses.append(commitment_loss)
-
-    if isinstance(bottleneck, WassersteinBottleneck):
-        try:
-            mmd_weight = self.loss_config['bottleneck']['weights']['mmd']
-        except:
-            mmd_weight = 100
-
-        mmd_loss = ValueLoss(key='mmd', weight=mmd_weight, name='mmd_loss')
-        losses.append(mmd_loss)
-
-    return losses
 
 @hydra.main(config_path="./config/ldm", config_name="config", version_base=None)
 def main(cfg: DictConfig):
