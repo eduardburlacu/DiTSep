@@ -1,4 +1,5 @@
 import typing as tp
+from itertools import permutations
 import torch
 
 from torch.nn import functional as F
@@ -107,6 +108,52 @@ class AuralossLoss(LossWithTarget):
         self.decay_weight()
         return self.weight * loss
 
+class PITLoss(LossModule):
+    """Permutation Invariant Training (PIT) loss wrapper.
+    
+    Finds the optimal assignment between output and target sources by considering
+    all possible permutations and selecting the one with minimum loss.
+    """
+    def __init__(self, loss_module, input_key: str, target_key: str, name: str, weight: float = 1.0, decay: float = 1.0):
+        super().__init__(name=name, weight=weight, decay=decay)
+        self.loss_module = loss_module
+        self.input_key = input_key
+        self.target_key = target_key
+        
+    def forward(self, info):
+        target = info[self.target_key]  # [batch, sources, time]
+        input_data = info[self.input_key]  # [batch, sources, time]
+        
+        batch_size, n_sources = target.shape[0], target.shape[1]
+        
+        # Early exit for single-source case (no permutation needed)
+        if n_sources == 1:
+            loss = self.loss_module(info)
+            self.decay_weight()
+            return self.weight * loss
+        
+        # Compute loss for all permutations of the sources
+        perm_losses = []
+        
+        for perm in permutations(range(n_sources)):
+            perm_input = input_data[:, perm, ...]
+            
+            # Create a new info dict with the permuted sources
+            perm_info = dict(info)
+            perm_info[self.input_key] = perm_input
+            
+            # Compute loss for this permutation
+            loss = self.loss_module(perm_info)
+            perm_losses.append(loss)
+        
+        # Find the minimum loss across all permutations
+        min_loss = torch.stack(perm_losses).min()
+        
+        # Apply decay and weight
+        self.decay_weight()
+        return self.weight * min_loss
+
+
 class MultiLoss(nn.Module):
     def __init__(self, losses: tp.List[LossModule]):
         super().__init__()
@@ -124,4 +171,3 @@ class MultiLoss(nn.Module):
             losses[loss_module.name] = module_loss
 
         return total_loss, losses
-

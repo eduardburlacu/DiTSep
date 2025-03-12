@@ -47,7 +47,7 @@ train_diffsep: ## Train the separation model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/diffsep_train src/train_diffsep.sh
 
 train_diffsep_latent: ## Train the separation model
-	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/out_latent_diffsep_train src/train_diffsep_latent.sh
+	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/latent_diffsep_ouve src/train_diffsep_latent.sh
 
 train_ldm: ## Train the separation model
 	qsub -cwd -S /bin/bash -l qp=cuda-low,tests=0,mem_grab=0M,osrel="*",gpuclass="*", -o LOGS/ldm src/ldm.sh

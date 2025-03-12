@@ -42,7 +42,7 @@ vae:
     train_encoder: False
     train_decoder: True
     model_type: "autoencoder"
-    sample_size: 247808
+    
     sample_rate: ${model.fs}
     audio_channels: 1
     hop_length: 2048

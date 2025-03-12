@@ -31,54 +31,17 @@ def load_model(config):
         raise ValueError("config/model should have a score_model sub-config")
 
     load_pretrained = getattr(config, "load_pretrained", None)
+    model = model_obj(config)
     if load_pretrained is not None:
         ckpt_path = Path(to_absolute_path(load_pretrained))
-        hparams_path = (
-            ckpt_path.parents[1] / "hparams.yaml"
-        )  # path when using lightning checkpoint
-        hparams_path_alt = (
-            ckpt_path.parents[0] / "hparams.yaml"
-        )  # path when using calibration output checkpoint
 
         log.info(f"load pretrained:")
         log.info(f"  - {ckpt_path=}")
 
-        if hparams_path_alt.exists():
-            log.info(f"  - {hparams_path_alt=}")
-            # this was produced by the calibration routing
-            with open(hparams_path, "r") as f:
-                conf = yaml.safe_load(f)
-                config_seld_model = conf["config"]["model"][model_type]
+        state_dict = torch.load(str(ckpt_path))["state_dict"]
 
-            config.model.seld_model.update(config_seld_model)
-            model = model_obj(config)
-
-            state_dict = torch.load(str(ckpt_path))
-
-            log.info("Load model state_dict")
-            model.load_state_dict(state_dict, strict=True)
-
-        elif hparams_path.exists():
-            log.info(f"  - {hparams_path=}")
-            # this is a checkpoint
-            with open(hparams_path, "r") as f:
-                conf = yaml.safe_load(f)
-                config_seld_model = conf["config"]["model"][model_type]
-
-            config.model.seld_model.update(config_seld_model)
-
-            log.info("Load model from lightning checkpoint")
-            model = model_obj.load_from_checkpoint(
-                ckpt_path, strict=True, config=config
-            )
-
-        else:
-            raise ValueError(
-                f"Could not find the hparams.yaml file for checkpoint {ckpt_path}"
-            )
-
-    else:
-        model = model_obj(config)
+        log.info("Load model state_dict")
+        model.load_state_dict(state_dict, strict=True)
 
     return model, (load_pretrained is not None)
 
@@ -161,6 +124,7 @@ def main(cfg: DictConfig):
         fast_dev_run=False, # debugging
         num_nodes = 1,
         accumulate_grad_batches=4, 
+        precision="16-mixed",
         callbacks=callbacks,
         logger=pl_logger,
         check_val_every_n_epoch=1,

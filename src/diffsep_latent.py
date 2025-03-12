@@ -243,7 +243,11 @@ class LatentDiffSep(pl.LightningModule):
     
     def on_validation_epoch_start(self):
         self.n_batches_est_done = 0
+        self.set_eval_mode()
     
+    def on_test_epoch_start(self):
+        self.set_eval_mode()
+
     def validation_step(self, batch, batch_idx, dataset_i=0):
         mix, target = batch
         target_latent = target.clone()

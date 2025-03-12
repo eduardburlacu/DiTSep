@@ -11,12 +11,14 @@ mmnr_thresh_pit: -10.0  # threshold for using pit with train_source_order=pit
 use_ema: true
 clip_grad_norm: 5.0
 
-discriminator:
-    _target_: stable_audio_tools.models.discriminators.EncodecDiscriminator
-    filters: 64
-    n_ffts: [2048, 1024, 512, 256, 128]
-    hop_lengths: [512, 256, 128, 64, 32]
-    win_lengths: [2048, 1024, 512, 256, 128]
+#discriminator:
+#    _target_: stable_audio_tools.models.discriminators.EncodecDiscriminator
+#    filters: 64
+#    n_ffts: [2048, 1024, 512, 256, 128]
+#    hop_lengths: [512, 256, 128, 64, 32]
+#    win_lengths: [2048, 1024, 512, 256, 128]
+#    in_channels: 2
+#    out_channels: 2
 
 #loss_config
 loss:
@@ -33,16 +35,16 @@ loss:
             win_lengths: [2048, 1024, 512, 256, 128, 64, 32]
             perceptual_weighting: True
 
-    discriminator:
-        type: "encodec"
-        weights:
-            adversarial: 0.1
-            feature_matching: 5.0
+    #discriminator:
+    #    type: "encodec"
+    #    weights:
+    #        adversarial: 0.1
+    #        feature_matching: 5.0
     
     time:
         type: "l1"
         weights:
-            l1: 0.0
+            l1: 1.0
 
 main_val_loss: val/si_sdr
 main_val_loss_mode: max
@@ -59,35 +61,38 @@ val_losses:
         _target_: models.diffsep.losses.PESQ
         fs: ${model.fs}
 
-    val/stft:
-        _target_: stable_audio_tools.training.losses.auraloss.STFTLoss
-        sample_rate: ${model.fs}
+    #val/stft:
+    #    _target_: stable_audio_tools.training.losses.auraloss.STFTLoss
+    #    sample_rate: ${model.fs}
 
-    val/mrstft:
-        _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
-        sample_rate: ${model.fs}
+    #val/mrstft:
+    #    _target_: stable_audio_tools.training.losses.auraloss.MultiResolutionSTFTLoss
+    #    sample_rate: ${model.fs}
 
 
 optimizer:
-    ldm:
-        _target_: torch.optim.AdamW
-        lr: 0.00015
-        betas: [0.8, 0.99]
-        weight_decay: 0.001
-        amsgrad: true
+    generator:
+        type: AdamW
+        config:
+            lr: 0.00015 # 0.00015
+            betas: [0.8, 0.99]
+            weight_decay: 0.001
+            amsgrad: true
 
-    discriminator:
-        _target_: torch.optim.AdamW
-        lr: ${2*model.optimizer.ldm.lr}
-        betas: ${model.optimizer.ldm.betas}
-        weight_decay: ${model.optimizer.ldm.weight_decay}
-        amsgrad: ${model.optimizer.ldm.amsgrad}
+    #discriminator:
+    #    type: AdamW
+    #    config:
+    #        lr: 0.00030
+    #        betas: [0.8, 0.99]
+    #        weight_decay: 0.001
+    #        amsgrad: true
 
     scheduler:
-        _target_: torch.optim.lr_scheduler.InverseLR
-        inv_gamma: 200000
-        power: 0.5
-        warmup:
+        type: InverseLR
+        config:
+            inv_gamma: 200000
+            power: 0.5
+            warmup: 0.999
 
 ema:
     beta: 0.9999
@@ -99,3 +104,4 @@ scheduler: null
 
 demo:
     demo_every: 2000
+    sample_size: 247808

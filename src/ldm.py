@@ -14,11 +14,12 @@ from omegaconf.omegaconf import open_dict
 from hydra.utils import instantiate
 
 from stable_audio_tools.models.autoencoders import AudioAutoencoder, fold_channels_into_batch, unfold_channels_from_batch 
-from stable_audio_tools.models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
-from stable_audio_tools.training.losses import MelSpectrogramLoss, MultiLoss, AuralossLoss, ValueLoss, L1Loss, LossWithTarget, MSELoss, HubertLoss
+from stable_audio_tools.models.bottleneck import VAEBottleneck
+from stable_audio_tools.training.losses import MelSpectrogramLoss, MultiLoss, AuralossLoss, ValueLoss, L1Loss, MSELoss, PITLoss
 from stable_audio_tools.training.losses import auraloss as auraloss
 from stable_audio_tools.training.utils import create_optimizer_from_config, create_scheduler_from_config, log_audio, log_image, log_metric, log_point_cloud, logger_project_name
 
+import sdes
 import utils
 
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
@@ -44,16 +45,15 @@ class LDM(pl.LightningModule):
             config,
             warmup_steps: int = 0,
             warmup_mode: Literal["adv", "full"] = "adv",
-            encoder_freeze_on_warmup: bool = False,
-            use_ema: bool = True,
-            ema_copy = None,
+            encoder_freeze_on_warmup: bool = True,
+            use_ema: bool = False,
+            #ema_copy = None,
     ):
         super().__init__()
         self.config = config
         self.save_hyperparameters()
         os.environ["HYDRA_FULL_ERROR"] = "1"
-
-        self.set_train_mode()
+        self.use_ema = use_ema
         # Load the VAE and score model
         self.vae = utils.load_stable_model(
             self.config.model.vae.config_path,
@@ -65,6 +65,7 @@ class LDM(pl.LightningModule):
             self.config.model.score_model.model,
             verbose=False,
         )
+        
         log.info("Successfully loaded score model.")
 
         # Instantiate SDE
@@ -76,12 +77,6 @@ class LDM(pl.LightningModule):
             self.config.model, "time_sampling_strategy", "uniform"
         )
         log.info(f"Sampling time in [{self.t_eps, self.t_max}]")
-        
-        # PIT-related
-        self.init_hack_p = getattr(self.config.model, "init_hack_p", 1.0 / self.sde.N)
-        self.train_source_order = getattr(
-            self.config.model, "train_source_order", "random"
-        )
 
         # Warm-up
         self.warmed_up = False
@@ -93,22 +88,22 @@ class LDM(pl.LightningModule):
         self.automatic_optimization = False
         self.optimizer_configs = getattr(config.training, "optimizer", None)
 
-        # Losses
-        self.loss_config = getattr(config.training, "loss", None)
-        if hasattr(self.loss_config, "spectral"):
-            self.sdstft = instantiate(self.loss_config.spectral.config)
-
         # Discriminator
-        self.use_disc = hasattr(self.config.training, "discriminator") and hasattr(self.loss_config, "discriminator")
+        self.use_disc = hasattr(self.config.training, "discriminator") and hasattr(self.config.training.loss, "discriminator")
         if self.use_disc:
             self.discriminator = instantiate(self.config.training.discriminator)
         else:
             self.discriminator = None
-            
-        self.gen_loss_modules = []
+        
+        self.set_train_mode()
+
+        # Losses
+        self.loss_config = getattr(config.training, "loss", None)
+        if hasattr(self.loss_config, "spectral"):
+            sdstft = instantiate(self.loss_config.spectral.config)
 
         # Adversarial and feature matching losses
-        self.gen_loss_modules = torch.nn.ModuleList()
+        self.gen_loss_modules = []
         if self.use_disc:
             self.gen_loss_modules.append(
                 ValueLoss(key='loss_adv', weight=self.loss_config.discriminator.weights.adversarial, name='loss_adv')
@@ -119,22 +114,42 @@ class LDM(pl.LightningModule):
         stft_loss_decay = self.loss_config.spectral.decay
 
         self.gen_loss_modules.append(
-            AuralossLoss(self.sdstft, target_key = 'reals', input_key = 'decoded', name='mrstft_loss', weight=self.loss_config.spectral.weights.mrstft, decay = stft_loss_decay)
+            PITLoss(
+                loss_module=AuralossLoss(
+                sdstft, 
+                target_key='reals', 
+                input_key='decoded', 
+                name='mrstft_base', 
+                weight=self.loss_config.spectral.weights.mrstft,
+                decay=stft_loss_decay
+        ),
+        input_key='decoded',
+        target_key='reals',
+        name='pit_mrstft_loss',
+        weight=1.0)  
         )
-
+         #AuralossLoss(sdstft, target_key = 'reals', input_key = 'decoded', name='mrstft_loss', weight=self.loss_config.spectral.weights.mrstft, decay = stft_loss_decay)
         if "l1" in self.loss_config.time.weights:
             if self.loss_config.time.weights.l1 > 0.0:
-                self.gen_loss_modules.append(L1Loss(key_a='reals', key_b='decoded',
-                                             weight=self.loss_config.time.weights.l1,
-                                             name='l1_time_loss',
-                                             decay = self.loss_config.time.decay))
+                self.gen_loss_modules.append(PITLoss(
+                    loss_module=L1Loss(key_a='reals', key_b='decoded', weight=self.loss_config.time.weights.l1, name='l1_base'),
+                    input_key='decoded',
+                    target_key='reals',
+                    name='pit_l1_loss',
+                    weight=1.0
+                    )
+                )
 
         if "l2" in self.loss_config.time.weights:
             if self.loss_config['time']['weights']['l2'] > 0.0:
-                self.gen_loss_modules.append(MSELoss(key_a='reals', key_b='decoded',
-                                             weight=self.loss_config['time']['weights']['l2'],
-                                             name='l2_time_loss',
-                                             decay = self.loss_config['time'].get('decay', 1.0)))
+                self.gen_loss_modules.append(PITLoss(
+                    MSELoss(key_a='reals', key_b='decoded', weight=self.loss_config.time.weights.l2, name='l2_base'),
+                    input_key='decoded',
+                    target_key='reals',
+                    name='pit_l2_loss',
+                    weight=1.0
+                    )
+                )
 
         self.losses_gen = MultiLoss(self.gen_loss_modules)
 
@@ -147,7 +162,7 @@ class LDM(pl.LightningModule):
 
         # evaluation losses & metrics
         self.validation_step_outputs = []
-        self.val_losses = torch.nn.ModuleDict()
+        self.val_losses = dict()
         for name, loss_args in self.config.training.val_losses.items():
             self.val_losses[name] = instantiate(loss_args)
 
@@ -160,7 +175,6 @@ class LDM(pl.LightningModule):
     def encode(self, mix, target):
         mix = utils.pad(mix, self.vae.encoder.hop_length)
         mix = self.vae.encode(mix, iterate_batch=False).unsqueeze(1)
-        self.max_len_lat = max(self.max_len_lat, mix.shape[-1])
         if target is not None:
             target = utils.pad(target, self.vae.encoder.hop_length)
             bsz, n_src, seq_len = target.shape
@@ -238,8 +252,23 @@ class LDM(pl.LightningModule):
     def set_train_mode(self):
         self.train_encoder = getattr(self.config.model.vae,"train_encoder", False)
         self.train_decoder = getattr(self.config.model.vae,"train_decoder", True)
+        self.vae.encoder.requires_grad_(self.train_encoder)
+        self.vae.bottleneck.requires_grad_(self.train_encoder)
+        self.vae.decoder.requires_grad_(self.train_decoder)
         self.train_score = getattr(self.config.model.score_model,"train_score", False)
+        self.score_model.requires_grad_(self.train_score)
+        if self.use_disc:
+            self.discriminator.requires_grad_(True)
         
+    def set_eval_mode(self):
+        """Freeze all components for evaluation/testing."""
+        self.vae.encoder.requires_grad_(False)
+        self.vae.bottleneck.requires_grad_(False)
+        self.vae.decoder.requires_grad_(False)
+        self.score_model.requires_grad_(False)
+        if self.use_disc:
+            self.discriminator.requires_grad_(False)
+
     def sample_time(self, x):
         bsz = x.shape[0]
         return x.new_zeros(bsz).uniform_(self.t_eps, self.t_max)
@@ -259,6 +288,10 @@ class LDM(pl.LightningModule):
 
     def forward(self, xt, time, mix):
         return self.score_model(xt, time, mix)
+
+    def on_train_epoch_start(self):
+        """Apply training configuration at the start of each training epoch."""
+        self.set_train_mode()
 
     def training_step(self, batch, batch_idx):
         mix, reals = batch
@@ -341,7 +374,7 @@ class LDM(pl.LightningModule):
             opt_gen.zero_grad()
             self.manual_backward(loss)
             if self.clip_grad_norm > 0.0:
-                torch.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), self.clip_grad_norm)
+                torch.nn.utils.clip_grad_norm_(self.vae.decoder.parameters(), self.clip_grad_norm)
             opt_gen.step()
             if sched_gen is not None: # scheduler step every step
                 sched_gen.step()
@@ -355,7 +388,11 @@ class LDM(pl.LightningModule):
         self.log_dict(log_dict, prog_bar=True, on_step=True)
 
         return loss
-        
+
+    def on_validation_epoch_start(self):
+        """Apply evaluation configuration at the start of validation."""
+        self.set_eval_mode()
+
     def validation_step(self, batch, batch_idx, **kwargs):
         mix, reals = batch        
         decoded, *_ = self.separate(mix, target_dim=reals.shape[-1], latent=False)
@@ -397,20 +434,20 @@ class LDM(pl.LightningModule):
         return self.validation_step(batch, batch_idx, **kwargs)
 
     def configure_optimizers(self):
-        gen_params = list(self.autoencoder.parameters())
+        gen_params = list(self.vae.decoder.parameters())
 
         if self.use_disc:
-            opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
-            opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
-            if "scheduler" in self.optimizer_configs['autoencoder'] and "scheduler" in self.optimizer_configs['discriminator']:
-                sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
-                sched_disc = create_scheduler_from_config(self.optimizer_configs['discriminator']['scheduler'], opt_disc)
+            opt_gen = create_optimizer_from_config(self.optimizer_configs.generator, gen_params)
+            opt_disc = create_optimizer_from_config(self.optimizer_configs.discriminator, self.discriminator.parameters())
+            if hasattr(self.optimizer_configs, "scheduler"):
+                sched_gen = create_scheduler_from_config(self.optimizer_configs.scheduler, opt_gen)
+                sched_disc = create_scheduler_from_config(self.optimizer_configs.scheduler, opt_disc)
                 return [opt_gen, opt_disc], [sched_gen, sched_disc]
             return [opt_gen, opt_disc]
         else:
-            opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
-            if "scheduler" in self.optimizer_configs['autoencoder']:
-                sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
+            opt_gen = create_optimizer_from_config(self.optimizer_configs.generator, gen_params)
+            if hasattr(self.optimizer_configs, "scheduler"):
+                sched_gen = create_scheduler_from_config(self.optimizer_configs.scheduler, opt_gen)
                 return [opt_gen], [sched_gen]
             return [opt_gen]
 
@@ -585,22 +622,5 @@ class LDMDemoCallback(pl.Callback):
             module.train()
 
     @property
-    def use_ema(self):
-        return self.config.model.use_ema
-
-    @property
     def clip_grad_norm(self):
         return self.config.model.clip_grad_norm
-
-
-@hydra.main(config_path="./config/ldm", config_name="config", version_base=None)
-def main(cfg: DictConfig):
-    ldm = LDM.load_from_checkpoint(
-        checkpoint_path=cfg.model.score_model.score_ckpt_path, 
-        config=cfg, 
-        strict=False
-    )
-    print(ldm)
-
-if __name__ == "__main__":
-    main()

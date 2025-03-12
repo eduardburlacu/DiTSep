@@ -1,5 +1,3 @@
-# 2023 (c) LINE Corporation
-# MIT License
 import fast_bss_eval
 import torch
 from pesq import pesq
