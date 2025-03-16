@@ -44,13 +44,13 @@ loss:
     time:
         type: "l1"
         weights:
-            l1: 1.0
+            l1: 15.0
 
 main_val_loss: val/si_sdr
 main_val_loss_mode: max
 
 val_losses:
-    val/sisdr:
+    val/si_sdr:
         _target_: models.diffsep.losses.SISDRLoss
         zero_mean: true
         clamp_db: 30

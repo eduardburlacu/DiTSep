@@ -293,8 +293,112 @@ class LDM(pl.LightningModule):
         """Apply training configuration at the start of each training epoch."""
         self.set_train_mode()
 
+    @torch.no_grad()
+    def generate_dataset(
+        self, 
+        dataloader: torch.utils.data.DataLoader, 
+        output_dir:str | None = None, 
+        num_samples_per_mixture:int=6
+        ):
+        """Generate and cache latent samples for training.
+        Args:
+            dataloader: DataLoader containing the training data (should have batch_size=1, shuffle=False)
+            output_dir: Directory to save cached latents
+            num_samples_per_mixture: Number of latent samples to generate per mixture
+    
+        Returns:
+            Path to the metadata file
+        """
+        self.set_eval_mode()
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), "cached_latents")
+    
+        # Create directories
+        os.makedirs(output_dir, exist_ok=True)
+    
+        # Get the device the model is on
+        device = next(self.parameters()).device
+        log.info(f"Using device: {device} for latent generation")
+    
+        # Initialize metadata
+        metadata = {
+            'total_samples': 0,
+            'sample_indices': []  # Maps latent index to original dataset index
+        }
+    
+        # Process each batch
+        for batch_idx, batch in enumerate(dataloader):
+            mix, target = batch
+            
+            # Move tensors to the same device as the model
+            mix = mix.to(device)
+            target = target.to(device)
+            
+            target_shape = target.shape[-1]
+    
+            # First encode the mixture
+            mix_latent, _ = self.encode(mix, None)
+    
+            # Generate multiple samples per mixture using the score model
+            for sample_idx in range(num_samples_per_mixture):
+                # Setup sampler
+                sampler_kwargs = self.config.model.sampler.copy()
+                sampler = self.get_pc_sampler(
+                    "reverse_diffusion", 
+                    "ald", 
+                    mix_latent, 
+                    **sampler_kwargs
+                )
+    
+                # Generate a latent sample
+                latent_samples, *_ = sampler()
+                
+                # For batch_size=1, we'll have one latent per batch
+                # Move to CPU for storage to free GPU memory
+                latent = latent_samples[0].cpu()
+                
+                # Save the latent individually
+                latent_path = os.path.join(output_dir, f"latent_{metadata['total_samples']:06d}.pt")
+                torch.save({
+                    'latent': latent,
+                    'target_shape': target_shape,
+                    'dataset_idx': batch_idx
+                }, latent_path)
+                
+                # Update metadata
+                metadata['sample_indices'].append(batch_idx)
+                metadata['total_samples'] += 1
+                
+                if sample_idx % 2 == 0:  # Print less frequently to reduce output
+                    log.info(f"Generated sample {sample_idx+1}/{num_samples_per_mixture} for mixture {batch_idx+1}")
+            
+            # Clear GPU memory
+            torch.cuda.empty_cache()
+            
+            # Save metadata periodically
+            if batch_idx % 10 == 0:
+                metadata_path = os.path.join(output_dir, "metadata.pt")
+                torch.save(metadata, metadata_path)
+                log.info(f"Saved metadata checkpoint after {metadata['total_samples']} samples")
+        
+        # Save final metadata
+        metadata_path = os.path.join(output_dir, "metadata.pt")
+        torch.save(metadata, metadata_path)
+        log.info(f"Completed dataset generation with {metadata['total_samples']} samples")
+        
+        return metadata_path
+
     def training_step(self, batch, batch_idx):
-        mix, reals = batch
+        # Check if we're using the latent dataset (tuple of target, latent)
+        if isinstance(batch, tuple) and len(batch) == 2 and isinstance(batch[1], torch.Tensor):
+            reals, latent = batch
+            decoded = self.decode_grad(latent, target_dim=reals.shape[-1])
+
+        else:
+            # Original code path
+            mix, reals = batch
+            decoded, *_ = self.separate_grad(mix, target_dim=reals.shape[-1], latent=False)
+
         log_dict = {}
         loss_info = {}
 
@@ -404,7 +508,7 @@ class LDM(pl.LightningModule):
         val_loss_dict = {}
         for eval_key, eval_fn in self.eval_losses.items():
             loss_value = eval_fn(decoded, reals)
-            if eval_key == "sisdr": 
+            if eval_key == "si_sdr": 
                 loss_value = -loss_value
             if isinstance(loss_value, torch.Tensor):
                 loss_value = loss_value.item()
